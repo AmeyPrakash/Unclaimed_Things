@@ -409,13 +409,34 @@ export function App() {
     <div className="app-container">
       {/* Header */}
       <header className="app-header">
-        <a href="#browse" className="brand" onClick={(e) => { e.preventDefault(); setActiveTab('browse'); }}>
-          <Shield size={24} color="var(--accent-red)" />
-          <span>The Unclaimed Things Network</span>
-          <span className="brand-badge">PILOT</span>
-        </a>
+        <div className="header-top">
+          <a href="#browse" className="brand" onClick={(e) => { e.preventDefault(); setActiveTab('browse'); }}>
+            <Shield size={24} color="var(--accent-red)" />
+            <span>The Unclaimed Things Network</span>
+            <span className="brand-badge">PILOT</span>
+          </a>
 
-        <div className="nav-links">
+          <div className="header-actions">
+            <button className="nav-btn" onClick={toggleTheme} aria-label="Toggle theme" style={{ padding: '0.4rem 0.6rem' }}>
+              {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+            </button>
+
+            {currentUser ? (
+              <div className="header-user-badge">
+                <span className="header-user-name" title={currentUser.email}>{currentUser.display_name || currentUser.email}</span>
+                <button className="btn btn-secondary" style={{ height: '36px', padding: '0 0.75rem', fontSize: '0.8rem' }} onClick={handleLogout}>
+                  <LogOut size={14} /> Sign out
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-primary" style={{ height: '36px', fontSize: '0.85rem' }} onClick={() => setAuthModalOpen(true)}>
+                <LogIn size={14} /> Sign in
+              </button>
+            )}
+          </div>
+        </div>
+
+        <nav className="header-nav" aria-label="Main navigation">
           <button
             className={`nav-btn ${activeTab === 'browse' ? 'active' : ''}`}
             onClick={() => setActiveTab('browse')}
@@ -438,7 +459,7 @@ export function App() {
               else setActiveTab('found');
             }}
           >
-            <Box size={16} /> Staff Found Register
+            <Box size={16} /> Staff Workspace
           </button>
           {currentUser && (
             <button
@@ -448,24 +469,7 @@ export function App() {
               <CheckCircle size={16} /> My Claims
             </button>
           )}
-
-          <button className="nav-btn" onClick={toggleTheme} aria-label="Toggle theme">
-            {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-          </button>
-
-          {currentUser ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{currentUser.display_name || currentUser.email}</span>
-              <button className="btn btn-secondary" style={{ height: '36px', padding: '0 0.75rem' }} onClick={handleLogout}>
-                <LogOut size={14} /> Sign out
-              </button>
-            </div>
-          ) : (
-            <button className="btn btn-primary" style={{ height: '36px' }} onClick={() => setAuthModalOpen(true)}>
-              <LogIn size={14} /> Sign in
-            </button>
-          )}
-        </div>
+        </nav>
       </header>
 
       {/* Global Notices */}
@@ -507,8 +511,7 @@ export function App() {
 
             <div className="filters-row">
               <select
-                className="form-select"
-                style={{ width: '160px' }}
+                className="form-select filter-select"
                 value={selectedType}
                 onChange={(e) => setSelectedType(e.target.value)}
               >
@@ -518,8 +521,7 @@ export function App() {
               </select>
 
               <select
-                className="form-select"
-                style={{ width: '180px' }}
+                className="form-select filter-select"
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
               >
@@ -535,8 +537,7 @@ export function App() {
               </select>
 
               <select
-                className="form-select"
-                style={{ width: '220px' }}
+                className="form-select filter-select"
                 value={selectedLocation}
                 onChange={(e) => setSelectedLocation(e.target.value)}
               >
@@ -578,7 +579,7 @@ export function App() {
                           <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{report.title}</h3>
                         </div>
 
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div className="report-actions">
                           <button
                             className="btn btn-secondary"
                             style={{ height: '36px', fontSize: '0.85rem' }}
@@ -807,14 +808,14 @@ export function App() {
         {/* TAB 3: STAFF WORKSPACE */}
         {activeTab === 'found' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div className="staff-header">
               <div>
                 <h2>Staff Custody & Claims Workspace</h2>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                   Manage item intake, verify ownership claims, and handle multi-location transfers.
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div className="staff-subtabs">
                 <button
                   className={`btn ${staffSubTab === 'register' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ height: '36px', fontSize: '0.85rem' }}
@@ -899,7 +900,7 @@ export function App() {
                       />
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div className="form-grid-2">
                       <div className="form-group">
                         <label className="form-label">Found Location</label>
                         <select
@@ -1001,7 +1002,7 @@ export function App() {
                             </span>
                           </div>
 
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <div className="report-actions">
                             {claim.status === 'PENDING' && (
                               <>
                                 <button
@@ -1076,13 +1077,15 @@ export function App() {
                             </span>
                           </div>
 
-                          <button
-                            className="btn btn-primary"
-                            style={{ height: '36px', fontSize: '0.85rem' }}
-                            onClick={() => handleAcceptTransfer(event.id)}
-                          >
-                            <CheckCircle size={14} /> Accept & Take Custody
-                          </button>
+                          <div className="report-actions">
+                            <button
+                              className="btn btn-primary"
+                              style={{ height: '36px', fontSize: '0.85rem' }}
+                              onClick={() => handleAcceptTransfer(event.id)}
+                            >
+                              <CheckCircle size={14} /> Accept & Take Custody
+                            </button>
+                          </div>
                         </div>
                         {event.note_private && (
                           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: 'var(--text-muted)' }}>
@@ -1104,7 +1107,7 @@ export function App() {
                   ) : (
                     <div className="report-list">
                       {reports.filter(r => r.report_type === 'FOUND' && r.status === 'OPEN').map((rep) => (
-                        <div key={rep.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div key={rep.id} className="card transfer-item-card">
                           <div>
                             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}>
                               <span className="badge badge-found">{rep.category}</span>
