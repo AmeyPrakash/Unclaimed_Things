@@ -48,6 +48,32 @@ class MyClaimsView(APIView):
         claims = Claim.objects.filter(claimant=request.user).select_related('report')
         return Response(ClaimSerializer(claims, many=True).data)
 
+class StaffClaimsListView(APIView):
+    """
+    Staff-only view: lists claims for items held at locations assigned to the staff member.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        is_staff = request.user.is_staff or LocationMembership.objects.filter(user=request.user, is_active=True).exists()
+        if not is_staff:
+            return Response(
+                {"error": {"code": "FORBIDDEN", "message": "Only location staff can view claims queue."}},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if request.user.is_staff:
+            claims = Claim.objects.all().select_related('report', 'claimant')
+        else:
+            staff_locations = LocationMembership.objects.filter(
+                user=request.user, is_active=True
+            ).values_list('location_id', flat=True)
+            claims = Claim.objects.filter(
+                report__current_holding_location_id__in=staff_locations
+            ).select_related('report', 'claimant')
+
+        return Response(ClaimSerializer(claims, many=True).data)
+
 class ClaimDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

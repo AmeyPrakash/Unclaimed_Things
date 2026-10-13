@@ -92,3 +92,33 @@ class AcceptCustodyTransferView(APIView):
             )
 
         return Response(CustodyEventSerializer(new_event).data)
+
+class PendingTransfersListView(APIView):
+    """
+    Lists custody transfer requests that require acceptance.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        is_staff = request.user.is_staff or LocationMembership.objects.filter(user=request.user, is_active=True).exists()
+        if not is_staff:
+            return Response(
+                {"error": {"code": "FORBIDDEN", "message": "Only location staff can view pending transfers."}},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if request.user.is_staff:
+            transfers = CustodyEvent.objects.filter(
+                event_type=CustodyEventType.TRANSFER_REQUESTED
+            ).select_related('report', 'from_location', 'to_location', 'actor')
+        else:
+            staff_locations = LocationMembership.objects.filter(
+                user=request.user, is_active=True
+            ).values_list('location_id', flat=True)
+            transfers = CustodyEvent.objects.filter(
+                event_type=CustodyEventType.TRANSFER_REQUESTED,
+                to_location_id__in=staff_locations
+            ).select_related('report', 'from_location', 'to_location', 'actor')
+
+        return Response(CustodyEventSerializer(transfers, many=True).data)
+

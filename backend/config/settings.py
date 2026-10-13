@@ -145,6 +145,13 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
+
 # NVIDIA NIM AI Configuration
 NIM_ENABLED = os.environ.get('NIM_ENABLED', 'false').strip().lower() in ('true', '1', 'yes')
 NIM_BASE_URL = os.environ.get('NIM_BASE_URL', 'https://integrate.api.nvidia.com/v1').rstrip('/')

@@ -119,3 +119,49 @@ class WithdrawReportView(APIView):
         report.status = ReportStatus.WITHDRAWN
         report.save(update_fields=['status', 'updated_at'])
         return Response({"message": "Report withdrawn successfully."})
+
+class UploadReportImageView(APIView):
+    """
+    Uploads an image for an ItemReport. Strips EXIF metadata, enforces 5MB limit and formats.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        from .services import ImageUploadService
+        from .serializers import ReportImageSerializer
+        from django.core.exceptions import ValidationError
+
+        report = get_object_or_404(ItemReport, pk=pk)
+
+        # Check authorization: creator or staff
+        is_creator = report.created_by == request.user
+        is_staff = request.user.is_staff or LocationMembership.objects.filter(
+            user=request.user,
+            location=report.current_holding_location,
+            is_active=True
+        ).exists()
+
+        if not (is_creator or is_staff):
+            return Response(
+                {"error": {"code": "FORBIDDEN", "message": "You do not have permission to attach images to this report."}},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        file_obj = request.FILES.get('image')
+        if not file_obj:
+            return Response(
+                {"error": {"code": "BAD_REQUEST", "message": "No image file provided in form-data field 'image'."}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            report_image = ImageUploadService.attach_image_to_report(report, file_obj, user=request.user)
+        except ValidationError as e:
+            return Response(
+                {"error": {"code": "INVALID_IMAGE", "message": str(e.message if hasattr(e, 'message') else e)}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(ReportImageSerializer(report_image).data, status=status.HTTP_201_CREATED)
+

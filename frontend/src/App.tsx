@@ -2,22 +2,30 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Shield, MapPin, Calendar,
   Moon, Sun, PlusCircle, CheckCircle, AlertCircle, ArrowRight,
-  LogOut, LogIn, ExternalLink, RefreshCw, Box, Lock
+  LogOut, LogIn, ExternalLink, RefreshCw, Box, Lock, Upload, Image as ImageIcon
 } from 'lucide-react';
-import { api, type User, type Location, type ItemReport, type MatchResponse, type Claim } from './api';
+import { api, type User, type Location, type ItemReport, type MatchResponse, type Claim, type CustodyEvent } from './api';
 
 export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<'browse' | 'lost' | 'found' | 'claims'>('browse');
+  const [staffSubTab, setStaffSubTab] = useState<'register' | 'claims' | 'transfers'>('register');
 
   // Data states
   const [reports, setReports] = useState<ItemReport[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [myClaims, setMyClaims] = useState<Claim[]>([]);
+  const [staffClaimsList, setStaffClaimsList] = useState<Claim[]>([]);
+  const [pendingTransfers, setPendingTransfers] = useState<CustodyEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  // Transfer modal
+  const [transferModalReport, setTransferModalReport] = useState<ItemReport | null>(null);
+  const [transferToLocation, setTransferToLocation] = useState('');
+  const [transferNote, setTransferNote] = useState('');
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,6 +63,9 @@ export function App() {
     distinguishing_details: '',
   });
 
+  const [lostImage, setLostImage] = useState<File | null>(null);
+  const [foundImage, setFoundImage] = useState<File | null>(null);
+
   // Auth Form
   const [authForm, setAuthForm] = useState({
     email: '',
@@ -82,6 +93,9 @@ export function App() {
     if (activeTab === 'claims' && currentUser) {
       loadMyClaims();
     }
+    if (activeTab === 'found' && currentUser) {
+      loadStaffData();
+    }
   }, [activeTab, currentUser]);
 
   const toggleTheme = () => {
@@ -100,9 +114,10 @@ export function App() {
   const loadLocations = async () => {
     try {
       const data = await api.locations.list();
-      setLocations(data);
+      setLocations(Array.isArray(data) ? data : []);
     } catch (err: unknown) {
       console.error(err);
+      setLocations([]);
     }
   };
 
@@ -133,9 +148,73 @@ export function App() {
   const loadMyClaims = async () => {
     try {
       const claims = await api.claims.myClaims();
-      setMyClaims(claims);
+      setMyClaims(Array.isArray(claims) ? claims : ((claims as unknown as { results: Claim[] })?.results || []));
     } catch (err: unknown) {
       setErrorNotice(err instanceof Error ? err.message : 'Failed to load claims');
+      setMyClaims([]);
+    }
+  };
+
+  const loadStaffData = async () => {
+    try {
+      const [claims, transfers] = await Promise.all([
+        api.claims.staffClaims().catch(() => []),
+        api.custody.pendingTransfers().catch(() => []),
+      ]);
+      setStaffClaimsList(Array.isArray(claims) ? claims : []);
+      setPendingTransfers(Array.isArray(transfers) ? transfers : []);
+    } catch (err: unknown) {
+      console.error(err);
+    }
+  };
+
+  const handleDecideClaim = async (claimId: string, decision: 'approve' | 'reject') => {
+    const note = prompt(`Enter staff review note for ${decision}:`) || '';
+    try {
+      await api.claims.decide(claimId, decision, note);
+      setSuccessNotice(`Claim successfully marked as ${decision.toUpperCase()}.`);
+      loadStaffData();
+    } catch (err: unknown) {
+      setErrorNotice(err instanceof Error ? err.message : 'Action failed');
+    }
+  };
+
+  const handleCompleteHandover = async (claimId: string) => {
+    if (!confirm('Confirm that the physical item has been handed over to the claimant?')) return;
+    try {
+      await api.claims.completeHandover(claimId);
+      setSuccessNotice('Handover recorded! Item marked as RETURNED in network custody.');
+      loadStaffData();
+      loadReports();
+    } catch (err: unknown) {
+      setErrorNotice(err instanceof Error ? err.message : 'Failed to complete handover');
+    }
+  };
+
+  const handleAcceptTransfer = async (custodyId: string) => {
+    try {
+      await api.custody.acceptTransfer(custodyId);
+      setSuccessNotice('Custody transfer accepted! Holding location updated.');
+      loadStaffData();
+      loadReports();
+    } catch (err: unknown) {
+      setErrorNotice(err instanceof Error ? err.message : 'Failed to accept transfer');
+    }
+  };
+
+  const handleInitiateTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferModalReport || !transferToLocation) return;
+    try {
+      await api.custody.requestTransfer(transferModalReport.id, transferToLocation, transferNote);
+      setSuccessNotice('Transfer requested! Waiting for destination staff acknowledgement.');
+      setTransferModalReport(null);
+      setTransferToLocation('');
+      setTransferNote('');
+      loadReports();
+      loadStaffData();
+    } catch (err: unknown) {
+      setErrorNotice(err instanceof Error ? err.message : 'Failed to request transfer');
     }
   };
 
@@ -205,6 +284,14 @@ export function App() {
         distinguishing_details: distinguishingParsed,
       });
 
+      if (lostImage) {
+        try {
+          await api.reports.uploadImage(report.id, lostImage);
+        } catch (imgErr) {
+          console.error('Image upload failed:', imgErr);
+        }
+      }
+
       setSuccessNotice('Lost item reported! Analyzing database for matches...');
       setLostForm({
         title: '',
@@ -215,6 +302,7 @@ export function App() {
         private_description: '',
         distinguishing_details: '',
       });
+      setLostImage(null);
       loadReports();
       openMatchesModal(report);
     } catch (err: unknown) {
@@ -246,6 +334,14 @@ export function App() {
         distinguishing_details: distinguishingParsed,
       });
 
+      if (foundImage) {
+        try {
+          await api.reports.uploadImage(report.id, foundImage);
+        } catch (imgErr) {
+          console.error('Image upload failed:', imgErr);
+        }
+      }
+
       setSuccessNotice('Found item registered and indexed in custody records.');
       setFoundForm({
         title: '',
@@ -257,6 +353,7 @@ export function App() {
         private_description: '',
         distinguishing_details: '',
       });
+      setFoundImage(null);
       loadReports();
       openMatchesModal(report);
     } catch (err: unknown) {
@@ -312,7 +409,7 @@ export function App() {
     <div className="app-container">
       {/* Header */}
       <header className="app-header">
-        <a href="#" className="brand" onClick={() => setActiveTab('browse')}>
+        <a href="#browse" className="brand" onClick={(e) => { e.preventDefault(); setActiveTab('browse'); }}>
           <Shield size={24} color="var(--accent-red)" />
           <span>The Unclaimed Things Network</span>
           <span className="brand-badge">PILOT</span>
@@ -444,7 +541,7 @@ export function App() {
                 onChange={(e) => setSelectedLocation(e.target.value)}
               >
                 <option value="">All Campus Locations</option>
-                {locations.map((loc) => (
+                {(Array.isArray(locations) ? locations : []).map((loc) => (
                   <option key={loc.id} value={loc.id}>
                     {loc.name}
                   </option>
@@ -489,6 +586,20 @@ export function App() {
                           >
                             <ExternalLink size={14} /> AI Matches
                           </button>
+                          {currentUser?.is_staff && report.report_type === 'FOUND' && report.status === 'OPEN' && (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ height: '36px', fontSize: '0.85rem' }}
+                              onClick={() => {
+                                setTransferModalReport(report);
+                                setTransferToLocation('');
+                                setTransferNote('');
+                              }}
+                              title="Transfer physical custody to another location"
+                            >
+                              <Box size={14} /> Transfer
+                            </button>
+                          )}
                           {report.report_type === 'FOUND' && report.status === 'OPEN' && (
                             <button
                               className="btn btn-primary"
@@ -507,6 +618,25 @@ export function App() {
                       <p style={{ fontSize: '0.925rem', color: 'var(--text)' }}>
                         {report.public_description}
                       </p>
+
+                      {report.images && report.images.length > 0 && (
+                        <div style={{ display: 'flex', gap: '0.5rem', margin: '0.5rem 0', flexWrap: 'wrap' }}>
+                          {report.images.map((img) => (
+                            <img
+                              key={img.id}
+                              src={img.url}
+                              alt={report.title}
+                              style={{
+                                width: '70px',
+                                height: '70px',
+                                objectFit: 'cover',
+                                borderRadius: 'var(--radius)',
+                                border: '1px solid var(--border)',
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
 
                       <div className="report-meta">
                         {loc && (
@@ -600,7 +730,7 @@ export function App() {
                     onChange={(e) => setLostForm({ ...lostForm, last_seen_location: e.target.value })}
                   >
                     <option value="">Unknown / Not sure</option>
-                    {locations.map((loc) => (
+                    {(Array.isArray(locations) ? locations : []).map((loc) => (
                       <option key={loc.id} value={loc.id}>{loc.name}</option>
                     ))}
                   </select>
@@ -643,6 +773,24 @@ export function App() {
                   </div>
                 </div>
 
+                <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                  <label className="form-label">
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Upload size={14} /> Attach Photo (Optional)</span>
+                    <span className="label-scope">EXIF-PURGED</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="form-input"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setLostImage(e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <span className="form-help">Max 5MB (JPEG, PNG, WEBP). Location metadata and camera serials are stripped automatically.</span>
+                </div>
+
                 <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                   <button type="button" className="btn btn-secondary" onClick={() => setActiveTab('browse')}>
                     Cancel
@@ -656,122 +804,335 @@ export function App() {
           </div>
         )}
 
-        {/* TAB 3: STAFF FOUND REGISTER */}
+        {/* TAB 3: STAFF WORKSPACE */}
         {activeTab === 'found' && (
-          <div style={{ maxWidth: '680px', margin: '0 auto' }}>
-            <div className="card">
-              <h2 style={{ marginBottom: '0.5rem' }}>Register a Found Item (Staff Only)</h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-                Authorized campus staff register found belongings and maintain custody records across participating locations.
-              </p>
-
-              <form onSubmit={handleCreateFound}>
-                <div className="form-group">
-                  <label className="form-label">
-                    <span>Item Title *</span>
-                    <span className="label-scope">PUBLIC</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    className="form-input"
-                    placeholder="e.g. Dark wireless headphone case"
-                    value={foundForm.title}
-                    onChange={(e) => setFoundForm({ ...foundForm, title: e.target.value })}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">
-                    <span>Category *</span>
-                    <span className="label-scope">PUBLIC</span>
-                  </label>
-                  <select
-                    className="form-select"
-                    value={foundForm.category}
-                    onChange={(e) => setFoundForm({ ...foundForm, category: e.target.value })}
-                  >
-                    <option value="ELECTRONICS">Electronics</option>
-                    <option value="BAG">Bag / Backpack</option>
-                    <option value="KEYS">Keys</option>
-                    <option value="BOTTLE">Bottle / Flask</option>
-                    <option value="DOCUMENT">Document / ID Card</option>
-                    <option value="CLOTHING">Clothing</option>
-                    <option value="ACCESSORY">Accessory</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">
-                    <span>Public Description *</span>
-                    <span className="label-scope">PUBLIC</span>
-                  </label>
-                  <textarea
-                    required
-                    className="form-textarea"
-                    placeholder="General appearance for owner recognition. Keep serial numbers out of this field."
-                    value={foundForm.public_description}
-                    onChange={(e) => setFoundForm({ ...foundForm, public_description: e.target.value })}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div className="form-group">
-                    <label className="form-label">Found Location</label>
-                    <select
-                      className="form-select"
-                      value={foundForm.found_location}
-                      onChange={(e) => setFoundForm({ ...foundForm, found_location: e.target.value })}
-                    >
-                      <option value="">Select Location</option>
-                      {locations.map((loc) => (
-                        <option key={loc.id} value={loc.id}>{loc.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Holding Location</label>
-                    <select
-                      className="form-select"
-                      value={foundForm.current_holding_location}
-                      onChange={(e) => setFoundForm({ ...foundForm, current_holding_location: e.target.value })}
-                    >
-                      <option value="">Select Location</option>
-                      {locations.map((loc) => (
-                        <option key={loc.id} value={loc.id}>{loc.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Secure staff notes */}
-                <div style={{ marginTop: '1.5rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface-muted)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-blue)', fontWeight: 600 }}>
-                    <Lock size={16} /> Confidential Verification Details
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Distinguishing Attributes</label>
-                    <textarea
-                      className="form-textarea"
-                      placeholder="e.g. Serial # or specific items inside a pouch used to test claimants."
-                      value={foundForm.private_description}
-                      onChange={(e) => setFoundForm({ ...foundForm, private_description: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setActiveTab('browse')}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary">
-                    Register Found Item
-                  </button>
-                </div>
-              </form>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div>
+                <h2>Staff Custody & Claims Workspace</h2>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Manage item intake, verify ownership claims, and handle multi-location transfers.
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  className={`btn ${staffSubTab === 'register' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ height: '36px', fontSize: '0.85rem' }}
+                  onClick={() => setStaffSubTab('register')}
+                >
+                  <PlusCircle size={14} /> Register Found Item
+                </button>
+                <button
+                  className={`btn ${staffSubTab === 'claims' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ height: '36px', fontSize: '0.85rem' }}
+                  onClick={() => setStaffSubTab('claims')}
+                >
+                  <Shield size={14} /> Review Claims ({staffClaimsList.filter(c => c.status === 'PENDING').length})
+                </button>
+                <button
+                  className={`btn ${staffSubTab === 'transfers' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ height: '36px', fontSize: '0.85rem' }}
+                  onClick={() => setStaffSubTab('transfers')}
+                >
+                  <Box size={14} /> Transfers ({pendingTransfers.length})
+                </button>
+              </div>
             </div>
+
+            {/* SUB-TAB 1: REGISTER FOUND ITEM */}
+            {staffSubTab === 'register' && (
+              <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+                <div className="card">
+                  <h3 style={{ marginBottom: '0.5rem' }}>Register Found Belonging</h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                    Record newly received belongings. Private features will be encrypted and hidden from public search.
+                  </p>
+
+                  <form onSubmit={handleCreateFound}>
+                    <div className="form-group">
+                      <label className="form-label">
+                        <span>Item Title *</span>
+                        <span className="label-scope">PUBLIC</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        className="form-input"
+                        placeholder="e.g. Dark wireless headphone case"
+                        value={foundForm.title}
+                        onChange={(e) => setFoundForm({ ...foundForm, title: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">
+                        <span>Category *</span>
+                        <span className="label-scope">PUBLIC</span>
+                      </label>
+                      <select
+                        className="form-select"
+                        value={foundForm.category}
+                        onChange={(e) => setFoundForm({ ...foundForm, category: e.target.value })}
+                      >
+                        <option value="ELECTRONICS">Electronics</option>
+                        <option value="BAG">Bag / Backpack</option>
+                        <option value="KEYS">Keys</option>
+                        <option value="BOTTLE">Bottle / Flask</option>
+                        <option value="DOCUMENT">Document / ID Card</option>
+                        <option value="CLOTHING">Clothing</option>
+                        <option value="ACCESSORY">Accessory</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">
+                        <span>Public Description *</span>
+                        <span className="label-scope">PUBLIC</span>
+                      </label>
+                      <textarea
+                        required
+                        className="form-textarea"
+                        placeholder="General appearance for owner recognition. Keep serial numbers out of this field."
+                        value={foundForm.public_description}
+                        onChange={(e) => setFoundForm({ ...foundForm, public_description: e.target.value })}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div className="form-group">
+                        <label className="form-label">Found Location</label>
+                        <select
+                          className="form-select"
+                          value={foundForm.found_location}
+                          onChange={(e) => setFoundForm({ ...foundForm, found_location: e.target.value })}
+                        >
+                          <option value="">Select Location</option>
+                          {(Array.isArray(locations) ? locations : []).map((loc) => (
+                            <option key={loc.id} value={loc.id}>{loc.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Holding Location</label>
+                        <select
+                          className="form-select"
+                          value={foundForm.current_holding_location}
+                          onChange={(e) => setFoundForm({ ...foundForm, current_holding_location: e.target.value })}
+                        >
+                          <option value="">Select Location</option>
+                          {(Array.isArray(locations) ? locations : []).map((loc) => (
+                            <option key={loc.id} value={loc.id}>{loc.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '1.5rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface-muted)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-blue)', fontWeight: 600 }}>
+                        <Lock size={16} /> Confidential Verification Details
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Distinguishing Attributes</label>
+                        <textarea
+                          className="form-textarea"
+                          placeholder="e.g. Serial # or specific items inside a pouch used to test claimants."
+                          value={foundForm.private_description}
+                          onChange={(e) => setFoundForm({ ...foundForm, private_description: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                      <label className="form-label">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><ImageIcon size={14} /> Attach Item Photo (Optional)</span>
+                        <span className="label-scope">EXIF-PURGED</span>
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="form-input"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            setFoundImage(e.target.files[0]);
+                          }
+                        }}
+                      />
+                      <span className="form-help">Max 5MB (JPEG, PNG, WEBP). Strips camera model and geolocation metadata before storing.</span>
+                    </div>
+
+                    <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                      <button type="button" className="btn btn-secondary" onClick={() => setActiveTab('browse')}>
+                        Cancel
+                      </button>
+                      <button type="submit" className="btn btn-primary">
+                        Register Found Item
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 2: CLAIMS REVIEW & HANDOVER */}
+            {staffSubTab === 'claims' && (
+              <div>
+                {staffClaimsList.length === 0 ? (
+                  <div className="state-box">
+                    <CheckCircle size={32} />
+                    <p>No claims waiting for review.</p>
+                    <span style={{ fontSize: '0.85rem' }}>When claimants file ownership proofs on items held at your location, they appear here.</span>
+                  </div>
+                ) : (
+                  <div className="report-list">
+                    {staffClaimsList.map((claim) => (
+                      <div key={claim.id} className="card">
+                        <div className="report-item-header">
+                          <div>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                              <span className={`badge ${claim.status === 'APPROVED' ? 'badge-success' : claim.status === 'COMPLETED' ? 'badge-status' : 'badge-match'}`}>
+                                {claim.status}
+                              </span>
+                            </div>
+                            <h3>{claim.report_title}</h3>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              Claimant: <strong>{claim.claimant_email}</strong> • Filed: {new Date(claim.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            {claim.status === 'PENDING' && (
+                              <>
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ height: '34px', fontSize: '0.8rem' }}
+                                  onClick={() => handleDecideClaim(claim.id, 'approve')}
+                                >
+                                  Approve Claim
+                                </button>
+                                <button
+                                  className="btn btn-danger"
+                                  style={{ height: '34px', fontSize: '0.8rem' }}
+                                  onClick={() => handleDecideClaim(claim.id, 'reject')}
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            {claim.status === 'APPROVED' && (
+                              <button
+                                className="btn btn-primary"
+                                style={{ height: '34px', fontSize: '0.8rem', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+                                onClick={() => handleCompleteHandover(claim.id)}
+                              >
+                                <CheckCircle size={14} /> Complete Handover
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: '0.85rem', padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: 'var(--radius)' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-blue)', display: 'block', marginBottom: '0.25rem' }}>
+                            CLAIMANT VERIFICATION STATEMENT:
+                          </span>
+                          <p style={{ fontSize: '0.9rem' }}>{claim.claimant_statement}</p>
+                        </div>
+
+                        {claim.review_note_private && (
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            <strong>Staff Note:</strong> {claim.review_note_private}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-TAB 3: CUSTODY TRANSFERS */}
+            {staffSubTab === 'transfers' && (
+              <div>
+                <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Pending Incoming Transfers</h3>
+                {pendingTransfers.length === 0 ? (
+                  <div className="state-box">
+                    <Box size={32} />
+                    <p>No incoming transfers waiting for acceptance.</p>
+                    <span style={{ fontSize: '0.85rem' }}>Transfers initiated by other campus locations will appear here for acknowledgement.</span>
+                  </div>
+                ) : (
+                  <div className="report-list">
+                    {pendingTransfers.map((event) => (
+                      <div key={event.id} className="card">
+                        <div className="report-item-header">
+                          <div>
+                            <span className="badge badge-match" style={{ marginBottom: '0.35rem' }}>
+                              TRANSFER REQUESTED
+                            </span>
+                            <h4>Transfer to {event.to_location_name || 'Your Location'}</h4>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              From: <strong>{event.from_location_name}</strong> • Initiated by: {event.actor_email}
+                            </span>
+                          </div>
+
+                          <button
+                            className="btn btn-primary"
+                            style={{ height: '36px', fontSize: '0.85rem' }}
+                            onClick={() => handleAcceptTransfer(event.id)}
+                          >
+                            <CheckCircle size={14} /> Accept & Take Custody
+                          </button>
+                        </div>
+                        {event.note_private && (
+                          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: 'var(--text-muted)' }}>
+                            Note: {event.note_private}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginTop: '2rem' }}>
+                  <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Active Found Belongings (Initiate Transfer)</h3>
+                  {reports.filter(r => r.report_type === 'FOUND' && r.status === 'OPEN').length === 0 ? (
+                    <div className="state-box">
+                      <Box size={28} />
+                      <p>No open found items currently in campus custody records.</p>
+                    </div>
+                  ) : (
+                    <div className="report-list">
+                      {reports.filter(r => r.report_type === 'FOUND' && r.status === 'OPEN').map((rep) => (
+                        <div key={rep.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                              <span className="badge badge-found">{rep.category}</span>
+                              <span className="badge badge-status">
+                                At: {rep.current_holding_location?.name || 'Unassigned'}
+                              </span>
+                            </div>
+                            <h4 style={{ fontSize: '1rem', fontWeight: 600 }}>{rep.title}</h4>
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{rep.public_description}</p>
+                          </div>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ height: '34px', fontSize: '0.8rem' }}
+                            onClick={() => {
+                              setTransferModalReport(rep);
+                              setTransferToLocation('');
+                              setTransferNote('');
+                            }}
+                          >
+                            <Box size={14} /> Request Transfer
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1052,6 +1413,74 @@ export function App() {
                 </button>
                 <button type="submit" className="btn btn-primary">
                   {authForm.isRegister ? 'Register' : 'Sign in'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: TRANSFER ITEM */}
+      {transferModalReport && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3>Transfer Item Custody</h3>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text)' }}
+                onClick={() => setTransferModalReport(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleInitiateTransfer}>
+              <p style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
+                Initiate multi-location physical custody transfer for: <strong>{transferModalReport.title}</strong>
+              </p>
+
+              <div className="notice notice-info" style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>
+                <Box size={16} />
+                <span>
+                  The item remains marked at its current holding location until staff at the destination location accept and acknowledge physical receipt.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Destination Campus Location *</label>
+                <select
+                  required
+                  className="form-select"
+                  value={transferToLocation}
+                  onChange={(e) => setTransferToLocation(e.target.value)}
+                >
+                  <option value="">Select Destination Campus Location</option>
+                  {(Array.isArray(locations) ? locations : [])
+                    .filter((loc) => loc.id !== transferModalReport.current_holding_location?.id)
+                    .map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.location_type})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Transfer Note / Tracking Reason</label>
+                <textarea
+                  className="form-textarea"
+                  placeholder="e.g. Student requested retrieval at Security HQ; sending via campus dispatch"
+                  value={transferNote}
+                  onChange={(e) => setTransferNote(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setTransferModalReport(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={!transferToLocation}>
+                  Request Transfer
                 </button>
               </div>
             </form>

@@ -3,6 +3,14 @@ from .models import ItemReport, ReportPrivateDetail, ReportImage, ReportType, Re
 from locations.serializers import LocationSerializer
 from locations.models import Location
 
+class ReportImageSerializer(serializers.ModelSerializer):
+    url = serializers.ImageField(source='image_file', read_only=True)
+
+    class Meta:
+        model = ReportImage
+        fields = ['id', 'url', 'content_type', 'size_bytes', 'created_at']
+        read_only_fields = fields
+
 class PublicItemReportSerializer(serializers.ModelSerializer):
     """
     Safe public serializer for browse, search, and candidate lists.
@@ -11,13 +19,14 @@ class PublicItemReportSerializer(serializers.ModelSerializer):
     last_seen_location = LocationSerializer(read_only=True)
     found_location = LocationSerializer(read_only=True)
     current_holding_location = LocationSerializer(read_only=True)
+    images = ReportImageSerializer(many=True, read_only=True)
     
     class Meta:
         model = ItemReport
         fields = [
             'id', 'report_type', 'category', 'title', 'public_description',
             'last_seen_at', 'found_at', 'last_seen_location', 'found_location',
-            'current_holding_location', 'status', 'created_at'
+            'current_holding_location', 'status', 'images', 'created_at'
         ]
         read_only_fields = fields
 

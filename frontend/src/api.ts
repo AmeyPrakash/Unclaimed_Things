@@ -14,6 +14,13 @@ export interface Location {
   is_active: boolean;
 }
 
+export interface ReportImage {
+  id: string;
+  url: string;
+  content_type: string;
+  size_bytes: number;
+}
+
 export interface ItemReport {
   id: string;
   report_type: 'LOST' | 'FOUND';
@@ -26,6 +33,7 @@ export interface ItemReport {
   found_location?: Location;
   current_holding_location?: Location;
   status: 'OPEN' | 'WITHDRAWN' | 'EXPIRED' | 'RETURNED';
+  images?: ReportImage[];
   created_at: string;
 }
 
@@ -138,7 +146,12 @@ export const api = {
   },
 
   locations: {
-    list: () => request<Location[]>('/locations/'),
+    list: async () => {
+      const data = await request<Location[] | { results: Location[]; count: number }>('/locations/');
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.results)) return data.results;
+      return [];
+    },
   },
 
   reports: {
@@ -176,6 +189,14 @@ export const api = {
       }),
     withdraw: (id: string) =>
       request<{ message: string }>(`/reports/${id}/withdraw/`, { method: 'POST' }),
+    uploadImage: (id: string, file: File) => {
+      const formData = new FormData();
+      formData.append('image', file);
+      return request<{ id: string; url: string; content_type: string; size_bytes: number }>(`/reports/${id}/images/`, {
+        method: 'POST',
+        body: formData,
+      });
+    },
   },
 
   matching: {
@@ -195,6 +216,7 @@ export const api = {
         body: JSON.stringify({ claimant_statement: statement }),
       }),
     myClaims: () => request<Claim[]>('/claims/mine/'),
+    staffClaims: () => request<Claim[]>('/claims/staff/'),
     get: (claimId: string) => request<Claim>(`/claims/${claimId}/`),
     addEvidence: (claimId: string, evidenceType: string, privateValue: string) =>
       request<ClaimEvidence>(`/claims/${claimId}/evidence/`, {
@@ -213,6 +235,8 @@ export const api = {
   custody: {
     getHistory: (reportId: string) =>
       request<CustodyEvent[]>(`/reports/${reportId}/custody/`),
+    pendingTransfers: () =>
+      request<CustodyEvent[]>('/custody/transfers/pending/'),
     requestTransfer: (reportId: string, toLocationId: string, note?: string) =>
       request<CustodyEvent>(`/reports/${reportId}/custody/transfers/`, {
         method: 'POST',
