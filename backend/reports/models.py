@@ -184,3 +184,35 @@ class ItemEmbedding(models.Model):
 
     def __str__(self):
         return f"Embedding for {self.report_id} [{self.embedding_status}]"
+
+class AbuseReason(models.TextChoices):
+    SPAM_OR_FRAUD = 'SPAM_OR_FRAUD', 'Spam or Fraudulent Listing'
+    INAPPROPRIATE = 'INAPPROPRIATE', 'Inappropriate or Offensive Content'
+    PRIVATE_INFO_LEAK = 'PRIVATE_INFO_LEAK', 'Personal Contact or Private Info Leak'
+    SUSPICIOUS_CLAIM = 'SUSPICIOUS_CLAIM', 'Suspicious Details / False Match'
+    OTHER = 'OTHER', 'Other Abuse / Safety Concern'
+
+class ReportAbuseFlag(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(
+        ItemReport,
+        on_delete=models.CASCADE,
+        related_name='abuse_flags'
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reported_flags'
+    )
+    reason = models.CharField(max_length=50, choices=AbuseReason.choices)
+    details = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = 'utn_report_abuse_flags'
+        unique_together = ('report', 'reporter')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Flag on {self.report_id} by {self.reporter_id} ({self.reason})"
+

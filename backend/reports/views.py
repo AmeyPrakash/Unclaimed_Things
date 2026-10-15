@@ -3,8 +3,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
-from .models import ItemReport, ReportType, ReportStatus, ReportVisibility
-from .serializers import PublicItemReportSerializer, LostReportCreateSerializer, FoundReportCreateSerializer
+from .models import ItemReport, ReportType, ReportStatus, ReportVisibility, ReportAbuseFlag
+from .serializers import (
+    PublicItemReportSerializer, LostReportCreateSerializer,
+    FoundReportCreateSerializer, ReportAbuseCreateSerializer
+)
 from locations.models import LocationMembership
 
 class ReportViewSet(viewsets.ReadOnlyModelViewSet):
@@ -167,4 +170,53 @@ class UploadReportImageView(APIView):
             )
 
         return Response(ReportImageSerializer(report_image).data, status=status.HTTP_201_CREATED)
+
+class ReportAbuseView(APIView):
+    """
+    POST /api/v1/reports/<uuid:pk>/flag/
+    Allows authenticated users to flag a suspicious listing or abuse.
+    Enforces rate limiting, prevents duplicate flags per user on the same report,
+    and logs an immutable AuditEvent.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'report_create'
+
+    def post(self, request, pk):
+        report = get_object_or_404(ItemReport, pk=pk)
+
+        if ReportAbuseFlag.objects.filter(report=report, reporter=request.user).exists():
+            return Response(
+                {"error": {"code": "ALREADY_REPORTED", "message": "You have already submitted an abuse report for this listing."}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = ReportAbuseCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        flag = ReportAbuseFlag.objects.create(
+            report=report,
+            reporter=request.user,
+            reason=serializer.validated_data['reason'],
+            details=serializer.validated_data.get('details', '')
+        )
+
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="REPORT_FLAGGED_ABUSE",
+            entity_type="ItemReport",
+            entity_id=str(report.id),
+            metadata_redacted={
+                "reason": flag.reason,
+                "report_title": report.title,
+                "total_flags": report.abuse_flags.count()
+            }
+        )
+
+        return Response({
+            "message": "Report submitted for moderation review. Thank you for keeping UTN safe.",
+            "flag_id": str(flag.id),
+            "reason": flag.reason
+        }, status=status.HTTP_201_CREATED)
+
 

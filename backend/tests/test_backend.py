@@ -10,6 +10,7 @@ from reports.models import ItemReport, ReportPrivateDetail, ReportType, ItemCate
 from reports.serializers import PublicItemReportSerializer
 from claims.models import Claim, ClaimStatus, ClaimEvidence
 from custody.models import CustodyEvent, CustodyEventType
+from audit.models import AuditEvent
 
 class BackendFoundationTests(APITestCase):
     def tearDown(self):
@@ -434,6 +435,65 @@ class BackendFoundationTests(APITestCase):
         self.assertEqual(throttled_res.status_code, 429)
         self.assertEqual(throttled_res.data['error']['code'], "RATE_LIMITED")
         self.assertIn("Request was throttled", throttled_res.data['error']['message'])
+
+    def test_report_abuse_flagging_workflow(self):
+        # Create an open report
+        report = ItemReport.objects.create(
+            title="Suspicious Golden Watch Listing",
+            category=ItemCategory.ACCESSORY,
+            report_type=ReportType.FOUND,
+            public_description="Found expensive gold watch outside hostel",
+            found_location=self.library,
+            current_holding_location=self.library
+        )
+
+        # 1. Unauthenticated flag attempt must be rejected (401 or 403)
+        unauth_res = self.client.post(reverse('report-flag-abuse', kwargs={'pk': report.id}), {
+            "reason": "SPAM_OR_FRAUD",
+            "details": "Looks like an extortion bait listing"
+        })
+        self.assertIn(unauth_res.status_code, [401, 403])
+
+        # 2. Authenticated student flags the report
+        self.client.force_authenticate(user=self.student)
+        flag_res = self.client.post(reverse('report-flag-abuse', kwargs={'pk': report.id}), {
+            "reason": "SPAM_OR_FRAUD",
+            "details": "Looks like an extortion bait listing"
+        })
+        self.assertEqual(flag_res.status_code, 201)
+        self.assertIn("flag_id", flag_res.data)
+
+        # 3. Duplicate flag by same student should be rejected (400)
+        dup_res = self.client.post(reverse('report-flag-abuse', kwargs={'pk': report.id}), {
+            "reason": "SPAM_OR_FRAUD",
+            "details": "Duplicate report attempt"
+        })
+        self.assertEqual(dup_res.status_code, 400)
+        self.assertEqual(dup_res.data['error']['code'], "ALREADY_REPORTED")
+
+        # 4. Other student also flags for different reason
+        self.client.force_authenticate(user=self.other_student)
+        other_flag_res = self.client.post(reverse('report-flag-abuse', kwargs={'pk': report.id}), {
+            "reason": "PRIVATE_INFO_LEAK",
+            "details": "Has personal phone engraved"
+        })
+        self.assertEqual(other_flag_res.status_code, 201)
+
+        # 5. Verify AuditEvent created
+        self.assertTrue(AuditEvent.objects.filter(
+            action="REPORT_FLAGGED_ABUSE",
+            entity_id=str(report.id)
+        ).exists())
+
+        # 6. Admin can see the flagged count and details
+        self.client.force_authenticate(user=self.admin_user)
+        admin_reports_res = self.client.get(reverse('admin-reports') + '?flagged=true')
+        self.assertEqual(admin_reports_res.status_code, 200)
+        results = admin_reports_res.data.get('results', admin_reports_res.data)
+        matching_item = next(r for r in results if r['id'] == str(report.id))
+        self.assertEqual(matching_item['abuse_flags_count'], 2)
+        self.assertEqual(len(matching_item['flag_details']), 2)
+
 
 
 

@@ -18,6 +18,8 @@ export interface AdminOverview {
     expired: number;
     hidden: number;
     removed: number;
+    flagged?: number;
+    total_abuse_flags?: number;
   };
   claims: {
     total: number;
@@ -74,6 +76,15 @@ export interface AdminReportItem {
   found_location_name?: string;
   current_holding_location_name?: string;
   created_by_email?: string;
+  abuse_flags_count?: number;
+  flag_details?: Array<{
+    id: string;
+    reporter_email: string;
+    reason: string;
+    reason_display: string;
+    details: string;
+    created_at: string;
+  }>;
   created_at: string;
   updated_at: string;
 }
@@ -285,6 +296,11 @@ export const api = {
       }),
     withdraw: (id: string) =>
       request<{ message: string }>(`/reports/${id}/withdraw/`, { method: 'POST' }),
+    flag: (id: string, reason: string, details?: string) =>
+      request<{ message: string; flag_id: string }>(`/reports/${id}/flag/`, {
+        method: 'POST',
+        body: JSON.stringify({ reason, details: details || '' }),
+      }),
     uploadImage: (id: string, file: File) => {
       const formData = new FormData();
       formData.append('image', file);
@@ -351,7 +367,7 @@ export const api = {
       const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
       return request<PaginatedResponse<AuditEventItem> | AuditEventItem[]>(`/admin/audit-events/${qs ? `?${qs}` : ''}`);
     },
-    reports: (params?: { visibility?: string; report_type?: string; search?: string }) => {
+    reports: (params?: { visibility?: string; report_type?: string; search?: string; flagged?: string }) => {
       const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
       return request<PaginatedResponse<AdminReportItem> | AdminReportItem[]>(`/admin/reports/${qs ? `?${qs}` : ''}`);
     },

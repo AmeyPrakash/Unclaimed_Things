@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db.models import Q
 from .models import AuditEvent
 from .serializers import AuditEventSerializer, AdminReportSerializer, AdminUserSerializer
-from reports.models import ItemReport, ReportType, ReportStatus, ReportVisibility, ItemEmbedding
+from reports.models import ItemReport, ReportType, ReportStatus, ReportVisibility, ItemEmbedding, ReportAbuseFlag
 from claims.models import Claim, ClaimStatus
 from custody.models import CustodyEvent, CustodyEventType
 from accounts.models import User
@@ -36,6 +36,8 @@ class AdminOverviewView(APIView):
         expired_reports = ItemReport.objects.filter(status=ReportStatus.EXPIRED).count()
         hidden_reports = ItemReport.objects.filter(visibility=ReportVisibility.HIDDEN).count()
         removed_reports = ItemReport.objects.filter(visibility=ReportVisibility.REMOVED).count()
+        total_flagged_reports = ItemReport.objects.filter(abuse_flags__isnull=False).distinct().count()
+        total_abuse_flags = ReportAbuseFlag.objects.count()
 
         # Claim metrics
         total_claims = Claim.objects.count()
@@ -72,7 +74,9 @@ class AdminOverviewView(APIView):
                 "withdrawn": withdrawn_reports,
                 "expired": expired_reports,
                 "hidden": hidden_reports,
-                "removed": removed_reports
+                "removed": removed_reports,
+                "flagged": total_flagged_reports,
+                "total_abuse_flags": total_abuse_flags
             },
             "claims": {
                 "total": total_claims,
@@ -145,6 +149,7 @@ class AdminReportsListView(generics.ListAPIView):
         visibility = self.request.query_params.get('visibility')
         report_type = self.request.query_params.get('report_type')
         status_param = self.request.query_params.get('status')
+        flagged_param = self.request.query_params.get('flagged')
         search = self.request.query_params.get('search')
 
         if visibility:
@@ -153,6 +158,8 @@ class AdminReportsListView(generics.ListAPIView):
             qs = qs.filter(report_type=report_type.upper())
         if status_param:
             qs = qs.filter(status=status_param.upper())
+        if flagged_param and flagged_param.lower() in ('true', '1', 'yes'):
+            qs = qs.filter(abuse_flags__isnull=False).distinct()
         if search:
             qs = qs.filter(
                 Q(title__icontains=search) |

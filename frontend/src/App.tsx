@@ -3,7 +3,7 @@ import {
   Search, Shield, MapPin, Calendar,
   Moon, Sun, PlusCircle, CheckCircle, AlertCircle, ArrowRight,
   LogOut, LogIn, ExternalLink, RefreshCw, Box, Lock, Upload, Image as ImageIcon,
-  Activity, Users, FileText, Ban, Eye
+  Activity, Users, FileText, Ban, Eye, Flag
 } from 'lucide-react';
 import {
   api,
@@ -43,6 +43,14 @@ export function App() {
   const [modReason, setModReason] = useState('');
   const [suspendModalUser, setSuspendModalUser] = useState<AdminUserItem | null>(null);
   const [suspendReason, setSuspendReason] = useState('');
+
+  // Flag / Abuse states
+  const [flagModalReport, setFlagModalReport] = useState<ItemReport | null>(null);
+  const [flagReason, setFlagReason] = useState<string>('SPAM_OR_FRAUD');
+  const [flagDetails, setFlagDetails] = useState<string>('');
+  const [flagSubmitting, setFlagSubmitting] = useState<boolean>(false);
+  const [adminReportFlaggedFilter, setAdminReportFlaggedFilter] = useState<boolean>(false);
+  const [inspectFlagReport, setInspectFlagReport] = useState<AdminReportItem | null>(null);
 
   // Data states
   const [reports, setReports] = useState<ItemReport[]>([]);
@@ -170,6 +178,7 @@ export function App() {
       const params: Record<string, string> = {};
       if (adminReportVisibility) params.visibility = adminReportVisibility;
       if (adminReportSearch.trim()) params.search = adminReportSearch.trim();
+      if (adminReportFlaggedFilter) params.flagged = 'true';
       const res = await api.admin.reports(params);
       const items = Array.isArray(res) ? res : res?.results || [];
       setAdminReports(items);
@@ -177,6 +186,27 @@ export function App() {
       setErrorNotice(err?.message || 'Failed to load moderation reports');
     } finally {
       setAdminLoading(false);
+    }
+  };
+
+  const handleFlagSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!flagModalReport) return;
+    if (!currentUser) {
+      setAuthModalOpen(true);
+      return;
+    }
+    setFlagSubmitting(true);
+    try {
+      await api.reports.flag(flagModalReport.id, flagReason, flagDetails);
+      setSuccessNotice('Listing reported! Thank you for helping keep the campus community safe.');
+      setFlagModalReport(null);
+      setFlagReason('SPAM_OR_FRAUD');
+      setFlagDetails('');
+    } catch (err: unknown) {
+      setErrorNotice(err instanceof Error ? err.message : 'Failed to report listing');
+    } finally {
+      setFlagSubmitting(false);
     }
   };
 
@@ -747,6 +777,21 @@ export function App() {
                               Claim this Item
                             </button>
                           )}
+                          <button
+                            className="btn btn-secondary"
+                            style={{ height: '36px', fontSize: '0.85rem', color: 'var(--text-muted)' }}
+                            onClick={() => {
+                              if (!currentUser) setAuthModalOpen(true);
+                              else {
+                                setFlagModalReport(report);
+                                setFlagReason('SPAM_OR_FRAUD');
+                                setFlagDetails('');
+                              }
+                            }}
+                            title="Report suspicious listing or policy violation"
+                          >
+                            <Flag size={14} /> Report
+                          </button>
                         </div>
                       </div>
 
@@ -1589,6 +1634,16 @@ export function App() {
                     <option value="REMOVED">Removed (Takedown)</option>
                   </select>
 
+                  <button
+                    className={`btn ${adminReportFlaggedFilter ? 'btn-danger' : 'btn-secondary'}`}
+                    onClick={() => {
+                      setAdminReportFlaggedFilter(!adminReportFlaggedFilter);
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', height: '38px', fontSize: '0.85rem' }}
+                  >
+                    <Flag size={14} /> {adminReportFlaggedFilter ? 'Flagged Only (Active)' : 'Flagged Only'}
+                  </button>
+
                   <button className="btn btn-secondary" onClick={loadAdminReports}>
                     Filter
                   </button>
@@ -1619,6 +1674,16 @@ export function App() {
                                 Visibility: {item.visibility}
                               </span>
                               <span className="badge badge-status">Status: {item.status}</span>
+                              {item.abuse_flags_count && item.abuse_flags_count > 0 ? (
+                                <button
+                                  className="badge badge-danger"
+                                  style={{ cursor: 'pointer', border: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.5rem' }}
+                                  onClick={() => setInspectFlagReport(item)}
+                                  title="Inspect community flags"
+                                >
+                                  <Flag size={11} /> {item.abuse_flags_count} Flags Reported
+                                </button>
+                              ) : null}
                             </div>
 
                             <h3 style={{ fontSize: '1.05rem', fontWeight: 600 }}>{item.title}</h3>
@@ -2195,6 +2260,157 @@ export function App() {
                 onClick={handleSuspendUser}
               >
                 Confirm {suspendModalUser.is_active ? 'Suspension' : 'Reactivation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: REPORT ABUSE / FLAG LISTING */}
+      {flagModalReport && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}>
+                <Flag size={18} /> Report Listing or Abuse
+              </h3>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text)' }}
+                onClick={() => setFlagModalReport(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem', fontSize: '0.88rem' }}>
+              Reporting item: <strong>"{flagModalReport.title}"</strong>
+              <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                Reports are sent directly to campus security and administrators for investigation.
+              </p>
+            </div>
+
+            <form onSubmit={handleFlagSubmit}>
+              <div className="form-group">
+                <label className="form-label">Reason for Report *</label>
+                <select
+                  className="form-select"
+                  value={flagReason}
+                  onChange={(e) => setFlagReason(e.target.value)}
+                  required
+                >
+                  <option value="SPAM_OR_FRAUD">Spam or Fraudulent Listing</option>
+                  <option value="INAPPROPRIATE">Inappropriate or Offensive Content</option>
+                  <option value="PRIVATE_INFO_LEAK">Personal Contact or Private Info Leak</option>
+                  <option value="SUSPICIOUS_CLAIM">Suspicious Details / False Match</option>
+                  <option value="OTHER">Other Abuse / Safety Concern</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Additional Details (Optional)</label>
+                <textarea
+                  className="form-textarea"
+                  rows={3}
+                  placeholder="Provide any observations to assist campus staff..."
+                  value={flagDetails}
+                  onChange={(e) => setFlagDetails(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setFlagModalReport(null)}
+                  disabled={flagSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-danger"
+                  disabled={flagSubmitting}
+                >
+                  {flagSubmitting ? 'Submitting...' : 'Submit Report'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: INSPECT COMMUNITY FLAGS (ADMIN) */}
+      {inspectFlagReport && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '580px' }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}>
+                <Flag size={18} /> Community Flags ({inspectFlagReport.abuse_flags_count || 0})
+              </h3>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text)' }}
+                onClick={() => setInspectFlagReport(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem', fontSize: '0.9rem' }}>
+              Target Listing: <strong>"{inspectFlagReport.title}"</strong> ({inspectFlagReport.category})
+            </div>
+
+            <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              {inspectFlagReport.flag_details && inspectFlagReport.flag_details.length > 0 ? (
+                inspectFlagReport.flag_details.map((flag) => (
+                  <div key={flag.id} style={{ padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                      <span className="badge badge-danger" style={{ fontSize: '0.75rem' }}>{flag.reason_display || flag.reason}</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(flag.created_at).toLocaleString()}</span>
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                      Reported by: <strong>{flag.reporter_email}</strong>
+                    </div>
+                    {flag.details && (
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
+                        "{flag.details}"
+                      </p>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No flag details recorded.</p>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setInspectFlagReport(null)}
+              >
+                Close
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}
+                onClick={() => {
+                  setModModalReport(inspectFlagReport);
+                  setModVisibility('HIDDEN');
+                  setModReason('Hidden due to multiple community abuse flags');
+                  setInspectFlagReport(null);
+                }}
+              >
+                Hide Report
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  setModModalReport(inspectFlagReport);
+                  setModVisibility('REMOVED');
+                  setModReason('Removed following community abuse reports');
+                  setInspectFlagReport(null);
+                }}
+              >
+                Remove Listing
               </button>
             </div>
           </div>

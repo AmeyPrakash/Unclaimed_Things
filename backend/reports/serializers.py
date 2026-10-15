@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import ItemReport, ReportPrivateDetail, ReportImage, ReportType, ReportStatus
+from .models import (
+    ItemReport, ReportPrivateDetail, ReportImage, ReportType,
+    ReportStatus, ReportAbuseFlag, AbuseReason
+)
 from locations.serializers import LocationSerializer
 from locations.models import Location
 
@@ -104,3 +107,14 @@ class FoundReportCreateSerializer(serializers.ModelSerializer):
             )
 
         return report
+
+class ReportAbuseCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReportAbuseFlag
+        fields = ['reason', 'details']
+
+    def validate_reason(self, value):
+        if value not in AbuseReason.values:
+            raise serializers.ValidationError("Invalid abuse reason.")
+        return value
+

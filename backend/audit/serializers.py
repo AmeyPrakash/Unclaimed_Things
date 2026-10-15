@@ -29,6 +29,21 @@ class AdminReportSerializer(serializers.ModelSerializer):
     last_seen_location_name = serializers.CharField(source='last_seen_location.name', read_only=True, default=None)
     found_location_name = serializers.CharField(source='found_location.name', read_only=True, default=None)
     current_holding_location_name = serializers.CharField(source='current_holding_location.name', read_only=True, default=None)
+    abuse_flags_count = serializers.IntegerField(source='abuse_flags.count', read_only=True)
+    flag_details = serializers.SerializerMethodField()
+
+    def get_flag_details(self, obj):
+        return [
+            {
+                "id": str(flag.id),
+                "reporter_email": flag.reporter.email if flag.reporter else "unknown",
+                "reason": flag.reason,
+                "reason_display": flag.get_reason_display(),
+                "details": flag.details,
+                "created_at": flag.created_at
+            }
+            for flag in obj.abuse_flags.select_related('reporter').all()
+        ]
 
     class Meta:
         model = ItemReport
@@ -46,6 +61,8 @@ class AdminReportSerializer(serializers.ModelSerializer):
             'found_location_name',
             'current_holding_location_name',
             'created_by_email',
+            'abuse_flags_count',
+            'flag_details',
             'created_at',
             'updated_at'
         ]
