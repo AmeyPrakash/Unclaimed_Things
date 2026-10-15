@@ -6,6 +6,13 @@
 !.env.example
 .neon
 
+# Local documentation, agent customizations, and backups
+docs/
+.agents/
+docs_backup/
+agents_backup/
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -84,6 +91,8 @@ desktop.ini
 *.swp
 *.swo
 *~
+#docs
+docs
 
 # Temporary files
 tmp/
