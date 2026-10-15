@@ -1,0 +1,94 @@
+name: UTN Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend:
+    name: Backend Lint, Migrations & Test Suite
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: utn_test
+          POSTGRES_USER: utn_user
+          POSTGRES_PASSWORD: utn_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Check for uncreated Django migrations
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key-12345
+          DJANGO_DEBUG: "true"
+          DATABASE_URL: postgresql://utn_user:utn_test_password@localhost:5432/utn_test
+          NIM_ENABLED: "false"
+        run: |
+          python backend/manage.py makemigrations --check --dry-run
+
+      - name: Run backend test suite
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key-12345
+          DJANGO_DEBUG: "true"
+          DATABASE_URL: postgresql://utn_user:utn_test_password@localhost:5432/utn_test
+          NIM_ENABLED: "false"
+        run: |
+          python backend/manage.py test tests --verbosity=2
+
+  frontend:
+    name: Frontend Typecheck & Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run TypeScript check and Vite build
+        working-directory: frontend
+        run: npm run build
+
+  docker-validate:
+    name: Docker Infrastructure Configuration Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose Configuration
+        run: docker compose -f infra/docker-compose.yml config

@@ -581,3 +581,68 @@ class BackendFoundationTests(APITestCase):
             self.assertIn("Precision@1", output_str)
             self.assertIn("Mean Reciprocal Rank (MRR)", output_str)
             self.assertIn("Cleaned up", output_str)
+
+    def test_user_account_self_deletion(self):
+        disposable_user = User.objects.create_user(
+            email="delete.me@campus.edu",
+            password="DeletePass123!",
+            display_name="Disposable Student"
+        )
+        user_report = ItemReport.objects.create(
+            title="Lost Green Umbrella",
+            category=ItemCategory.ACCESSORY,
+            report_type=ReportType.LOST,
+            public_description="Green folding umbrella lost in hallway",
+            created_by=disposable_user,
+            status=ReportStatus.OPEN
+        )
+        found_item = ItemReport.objects.create(
+            title="Black Umbrella",
+            category=ItemCategory.ACCESSORY,
+            report_type=ReportType.FOUND,
+            public_description="Black umbrella found in library entrance",
+            status=ReportStatus.OPEN
+        )
+        user_claim = Claim.objects.create(
+            report=found_item,
+            claimant=disposable_user,
+            claimant_statement="I left my umbrella there",
+            status=ClaimStatus.PENDING
+        )
+
+        self.client.force_authenticate(user=disposable_user)
+        del_res = self.client.delete(reverse('auth-me'))
+        self.assertEqual(del_res.status_code, 200)
+
+
+        user_report.refresh_from_db()
+        self.assertEqual(user_report.status, ReportStatus.WITHDRAWN)
+
+        user_claim.refresh_from_db()
+        self.assertEqual(user_claim.status, ClaimStatus.REJECTED)
+
+        disposable_user.refresh_from_db()
+        self.assertFalse(disposable_user.is_active)
+        self.assertIn("deleted_", disposable_user.email)
+        self.assertEqual(disposable_user.display_name, "Deactivated User")
+
+        self.assertTrue(AuditEvent.objects.filter(
+            action="ACCOUNT_DELETED",
+            entity_id=str(disposable_user.id)
+        ).exists())
+
+    def test_pilot_health_diagnostic_command(self):
+        from unittest.mock import patch
+        from io import StringIO
+        import json
+        from django.core.management import call_command
+
+        dummy_vector = [0.01] * 2048
+        with patch('matching.services.NimEmbeddingAdapter.get_embedding', return_value=dummy_vector):
+            out = StringIO()
+            call_command('pilot_health_diagnostic', json=True, stdout=out)
+            output_data = json.loads(out.getvalue())
+            self.assertEqual(output_data['database']['status'], 'PASS')
+            self.assertEqual(output_data['cache_and_throttling']['status'], 'PASS')
+            self.assertIn('operational_queues', output_data)
+
