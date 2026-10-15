@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
@@ -58,10 +59,12 @@ def custom_exception_handler(exc, context):
         response.data = error_data
     else:
         # Unhandled server errors (500)
+        import traceback
+        traceback.print_exc()
         error_data = {
             "error": {
                 "code": "INTERNAL_SERVER_ERROR",
-                "message": "An unexpected server error occurred.",
+                "message": f"Server error: {exc}" if settings.DEBUG else "An unexpected server error occurred.",
                 "request_id": request_id
             }
         }

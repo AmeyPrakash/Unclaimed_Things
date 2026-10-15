@@ -177,7 +177,9 @@ class MatchingService:
 
             ranked.append({
                 'candidate': candidate,
-                'score': score
+                'score': score,
+                'vector_dist': data.get('vector_dist', 1.0),
+                'kw_hit': data.get('kw_hit', False)
             })
 
         ranked.sort(key=lambda x: x['score'], reverse=True)
@@ -189,6 +191,17 @@ class MatchingService:
             loc = c.current_holding_location or c.found_location or c.last_seen_location
             loc_label = loc.name if loc else "Participating location"
 
+            # Confidence thresholding per TRD Section 5 & EVALUATION.md
+            v_dist = item.get('vector_dist', 1.0)
+            if v_dist < 0.35:
+                match_label = "High similarity"
+            elif v_dist <= 0.55:
+                match_label = "Possible match"
+            elif item.get('kw_hit'):
+                match_label = "Keyword match"
+            else:
+                match_label = "Possible match"
+
             matches_list.append({
                 "candidate_report_id": str(c.id),
                 "category": c.category,
@@ -196,7 +209,7 @@ class MatchingService:
                 "public_description": c.public_description,
                 "safe_location_label": loc_label,
                 "reported_at": c.created_at.isoformat(),
-                "match_label": "Possible match"
+                "match_label": match_label
             })
 
         return {

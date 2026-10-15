@@ -22,3 +22,6 @@ requests==2.34.2
 sqlparse==0.6.0
 tzdata==2026.5
 urllib3==2.8.0
+inflection==0.5.1
+PyYAML==6.0.3
+uritemplate==4.2.0

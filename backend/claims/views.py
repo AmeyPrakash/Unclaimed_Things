@@ -166,6 +166,8 @@ class CompleteHandoverView(APIView):
     """
     Completes item handover to claimant.
     Atomically updates Claim to COMPLETED, Report to RETURNED, and logs a CustodyEvent.
+    Supports idempotency keys (header 'Idempotency-Key' or 'X-Idempotency-Key', or body param)
+    per TRD Section 6 to safely prevent duplicate submission harm.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -178,6 +180,28 @@ class CompleteHandoverView(APIView):
             )
 
         claim = get_object_or_404(Claim, pk=pk)
+        idempotency_key = (
+            request.headers.get('Idempotency-Key') or
+            request.headers.get('X-Idempotency-Key') or
+            request.data.get('idempotency_key')
+        )
+
+        from audit.models import AuditEvent
+
+        # Check for idempotent replay if claim is already completed
+        if claim.status == ClaimStatus.COMPLETED and idempotency_key:
+            matching_audit = AuditEvent.objects.filter(
+                entity_type="Claim",
+                entity_id=str(claim.id),
+                action="HANDOVER_COMPLETED",
+                metadata_redacted__idempotency_key=str(idempotency_key)
+            ).exists()
+            if matching_audit:
+                return Response({
+                    "message": "Handover successfully completed and item marked as RETURNED.",
+                    "idempotent_replay": True
+                }, status=status.HTTP_200_OK)
+
         if claim.status != ClaimStatus.APPROVED:
             return Response(
                 {"error": {"code": "CLAIM_NOT_APPROVED", "message": "Handover can only be completed for approved claims."}},
@@ -186,7 +210,6 @@ class CompleteHandoverView(APIView):
 
         from django.db import transaction
         from custody.models import CustodyEvent, CustodyEventType
-        from audit.models import AuditEvent
 
         with transaction.atomic():
             claim.status = ClaimStatus.COMPLETED
@@ -213,8 +236,12 @@ class CompleteHandoverView(APIView):
                 metadata_redacted={
                     "report_id": str(report.id),
                     "holding_location": report.current_holding_location.name if report.current_holding_location else None,
-                    "claimant_email": claim.claimant.email
+                    "claimant_email": claim.claimant.email,
+                    "idempotency_key": str(idempotency_key) if idempotency_key else None
                 }
             )
 
-        return Response({"message": "Handover successfully completed and item marked as RETURNED."})
+        return Response({
+            "message": "Handover successfully completed and item marked as RETURNED.",
+            "idempotent_replay": False
+        }, status=status.HTTP_200_OK)

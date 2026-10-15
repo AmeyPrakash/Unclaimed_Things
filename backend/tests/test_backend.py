@@ -494,6 +494,90 @@ class BackendFoundationTests(APITestCase):
         self.assertEqual(matching_item['abuse_flags_count'], 2)
         self.assertEqual(len(matching_item['flag_details']), 2)
 
+    def test_handover_idempotency_key_replay(self):
+        found_report = ItemReport.objects.create(
+            title="Noise Cancelling Headphones",
+            category=ItemCategory.ELECTRONICS,
+            report_type=ReportType.FOUND,
+            public_description="Black over-ear headphones found in auditorium",
+            found_location=self.library,
+            current_holding_location=self.library
+        )
+        claim = Claim.objects.create(
+            report=found_report,
+            claimant=self.student,
+            claimant_statement="Sony WH-1000XM4 with custom initials scratched on headband.",
+            status=ClaimStatus.APPROVED
+        )
 
+        idempotency_token = "idemp-handover-test-987654"
 
+        # 1. First handover call with idempotency key
+        self.client.force_authenticate(user=self.library_staff)
+        res1 = self.client.post(
+            reverse('claim-complete-handover', kwargs={'pk': claim.id}),
+            {"idempotency_key": idempotency_token},
+            format='json'
+        )
+        self.assertEqual(res1.status_code, 200)
+        self.assertFalse(res1.data.get('idempotent_replay'))
 
+        # Check claim is completed and custody event exists
+        claim.refresh_from_db()
+        self.assertEqual(claim.status, ClaimStatus.COMPLETED)
+        custody_count = CustodyEvent.objects.filter(
+            report=found_report,
+            event_type=CustodyEventType.HANDOVER_COMPLETED
+        ).count()
+        self.assertEqual(custody_count, 1)
+
+        # 2. Replay handover call with the EXACT SAME idempotency key
+        res2 = self.client.post(
+            reverse('claim-complete-handover', kwargs={'pk': claim.id}),
+            {"idempotency_key": idempotency_token},
+            format='json'
+        )
+        self.assertEqual(res2.status_code, 200)
+        self.assertTrue(res2.data.get('idempotent_replay'))
+
+        # Invariant: No duplicate custody events should be created on replay
+        self.assertEqual(
+            CustodyEvent.objects.filter(
+                report=found_report,
+                event_type=CustodyEventType.HANDOVER_COMPLETED
+            ).count(),
+            1
+        )
+
+        # 3. Third call with a DIFFERENT key must fail with 400 CLAIM_NOT_APPROVED
+        res3 = self.client.post(
+            reverse('claim-complete-handover', kwargs={'pk': claim.id}),
+            {"idempotency_key": "different-key-11111"},
+            format='json'
+        )
+        self.assertEqual(res3.status_code, 400)
+        self.assertEqual(res3.data['error']['code'], "CLAIM_NOT_APPROVED")
+
+    def test_openapi_schema_endpoint(self):
+        # Public schema endpoint does not require authentication
+        res = self.client.get('/api/v1/schema/')
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode('utf-8')
+        self.assertIn("The Unclaimed Things Network (UTN) API", content)
+        self.assertIn("/api/v1/reports/", content)
+        self.assertIn("/api/v1/claims/", content)
+
+    def test_retrieval_benchmark_management_command(self):
+        from unittest.mock import patch
+        from io import StringIO
+        from django.core.management import call_command
+
+        dummy_vector = [0.01] * 2048
+        with patch('matching.services.NimEmbeddingAdapter.get_embedding', return_value=dummy_vector):
+            out = StringIO()
+            call_command('run_retrieval_benchmark', limit=3, stdout=out)
+            output_str = out.getvalue()
+            self.assertIn("UTN Retrieval Benchmark Suite", output_str)
+            self.assertIn("Precision@1", output_str)
+            self.assertIn("Mean Reciprocal Rank (MRR)", output_str)
+            self.assertIn("Cleaned up", output_str)
