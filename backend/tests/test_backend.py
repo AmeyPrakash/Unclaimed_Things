@@ -741,5 +741,22 @@ class BackendFoundationTests(APITestCase):
             if full_test_path.exists():
                 full_test_path.unlink()
 
+    def test_production_security_headers_and_csp(self):
+        res = self.client.get(reverse('health-live'))
+        self.assertEqual(res.status_code, 200)
 
+        # 1. Content Security Policy verification
+        self.assertIn('Content-Security-Policy', res)
+        csp = res['Content-Security-Policy']
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("object-src 'none'", csp)
 
+        # 2. Permissions Policy verification
+        self.assertIn('Permissions-Policy', res)
+        self.assertEqual(res['Permissions-Policy'], "camera=(), microphone=(), geolocation=()")
+
+        # 3. Defense-in-depth headers
+        self.assertEqual(res.get('X-Content-Type-Options'), 'nosniff')
+        self.assertEqual(res.get('X-Frame-Options'), 'DENY')
+        self.assertEqual(res.get('Referrer-Policy'), 'strict-origin-when-cross-origin')

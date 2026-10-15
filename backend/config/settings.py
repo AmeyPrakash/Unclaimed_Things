@@ -54,7 +54,9 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'common.middleware.RequestIdMiddleware',
+    'common.middleware.SecurityHeadersMiddleware',
     'django.middleware.common.CommonMiddleware',
+
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -177,3 +179,17 @@ NIM_API_KEY = os.environ.get('NIM_API_KEY', '')
 NIM_EMBEDDING_MODEL = os.environ.get('NIM_EMBEDDING_MODEL', 'nvidia/nemotron-3-embed-1b')
 NIM_TIMEOUT_SECONDS = int(os.environ.get('NIM_TIMEOUT_SECONDS', 20))
 NIM_EMBEDDING_DIMENSION = 2048  # Verified dimension from live NVIDIA NIM model
+
+# Security Hardening & Headers (TRD Section 9)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
