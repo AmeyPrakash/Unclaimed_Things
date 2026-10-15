@@ -13,6 +13,7 @@ class CreateClaimForReportView(APIView):
     Submits a private claim on a found item report.
     """
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'claim_create'
 
     def post(self, request, pk):
         report = get_object_or_404(ItemReport, pk=pk)

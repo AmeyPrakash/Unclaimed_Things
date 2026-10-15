@@ -14,6 +14,7 @@ class ReportViewSet(viewsets.ReadOnlyModelViewSet):
     """
     serializer_class = PublicItemReportSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_scope = 'search'
 
     def get_queryset(self):
         qs = ItemReport.objects.filter(visibility=ReportVisibility.ACTIVE)
@@ -53,6 +54,7 @@ class CreateLostReportView(APIView):
     Allows authenticated users to report a lost item.
     """
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'report_create'
 
     def post(self, request):
         serializer = LostReportCreateSerializer(data=request.data, context={'request': request})
@@ -74,6 +76,7 @@ class CreateFoundReportView(APIView):
     Checks that the user is assigned to the current_holding_location.
     """
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'report_create'
 
     def post(self, request):
         # Staff verification

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: utn_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: utn
+      POSTGRES_USER: utn
+      POSTGRES_PASSWORD: utn_dev_only
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U utn -d utn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: utn_backend
+    restart: unless-stopped
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-utn-secret-key-change-for-production-deployment-123}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend,nginx
+      DATABASE_URL: ${DATABASE_URL:-postgresql://utn:utn_dev_only@db:5432/utn}
+      NIM_ENABLED: ${NIM_ENABLED:-false}
+      NIM_BASE_URL: ${NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NIM_API_KEY: ${NIM_API_KEY:-}
+      NIM_EMBEDDING_MODEL: ${NIM_EMBEDDING_MODEL:-nvidia/nemotron-3-embed-1b}
+      NIM_TIMEOUT_SECONDS: 20
+      UPLOAD_MAX_BYTES: 5242880
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: utn_frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    container_name: utn_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - media_data:/app/media:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  postgres_data:
+  media_data:

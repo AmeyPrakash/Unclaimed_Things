@@ -7,6 +7,7 @@ from .serializers import UserSerializer, LoginSerializer, RegisterSerializer
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'auth_login'
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -20,6 +21,7 @@ class LoginView(APIView):
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = 'auth_register'
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)

@@ -122,6 +122,14 @@ UPLOAD_MAX_BYTES = int(os.environ.get('UPLOAD_MAX_BYTES', 5242880))  # 5MB defau
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Cache Configuration (LocMemCache for dev & throttling)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'utn-throttle-cache',
+    }
+}
+
 # Django REST Framework Settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -131,6 +139,16 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'auth_login': '10/minute',
+        'auth_register': '5/minute',
+        'claim_create': '20/minute',
+        'report_create': '30/minute',
+        'search': '120/minute',
+    },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'EXCEPTION_HANDLER': 'common.exceptions.custom_exception_handler',

@@ -1,5 +1,6 @@
 import io
 from PIL import Image, ExifTags
+from django.core.cache import cache
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
@@ -11,7 +12,11 @@ from claims.models import Claim, ClaimStatus, ClaimEvidence
 from custody.models import CustodyEvent, CustodyEventType
 
 class BackendFoundationTests(APITestCase):
+    def tearDown(self):
+        cache.clear()
+
     def setUp(self):
+        cache.clear()
         self.library = Location.objects.create(
             name="Test Campus Library",
             location_type=LocationType.LIBRARY,
@@ -416,5 +421,19 @@ class BackendFoundationTests(APITestCase):
         self.assertTrue(AuditEvent.objects.filter(action="RETENTION_PURGE_WITHDRAWN_REPORT").exists())
         self.assertTrue(AuditEvent.objects.filter(action="RETENTION_ANONYMIZE_RETURNED_REPORT").exists())
         self.assertTrue(AuditEvent.objects.filter(action="RETENTION_PURGE_CLAIM_EVIDENCE").exists())
+
+    def test_rate_limiting_enforcement(self):
+        # Register endpoint has an auth_register throttle rate of 5/minute
+        for i in range(5):
+            res = self.client.post(reverse('auth-register'), {"email": f"rate_user_{i}@campus.edu"})
+            # Request should reach serializer validation (400) because limit has not been reached
+            self.assertEqual(res.status_code, 400)
+
+        # 6th consecutive request must trigger DRF ScopedRateThrottle (429 Too Many Requests)
+        throttled_res = self.client.post(reverse('auth-register'), {"email": "rate_user_exceeded@campus.edu"})
+        self.assertEqual(throttled_res.status_code, 429)
+        self.assertEqual(throttled_res.data['error']['code'], "RATE_LIMITED")
+        self.assertIn("Request was throttled", throttled_res.data['error']['message'])
+
 
 

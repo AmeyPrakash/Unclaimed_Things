@@ -12,6 +12,7 @@ class ReportMatchesView(APIView):
     Adheres strictly to the safe schema from BACKEND_SCHEMA Section 6.
     """
     permission_classes = [permissions.AllowAny]
+    throttle_scope = 'search'
 
     def get(self, request, pk):
         report = get_object_or_404(ItemReport, pk=pk)
