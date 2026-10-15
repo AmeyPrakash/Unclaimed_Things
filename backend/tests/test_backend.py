@@ -646,3 +646,100 @@ class BackendFoundationTests(APITestCase):
             self.assertEqual(output_data['cache_and_throttling']['status'], 'PASS')
             self.assertIn('operational_queues', output_data)
 
+    def test_claim_request_info_decision_and_resubmission(self):
+        found_report = ItemReport.objects.create(
+            title="Graphing Calculator",
+            category=ItemCategory.ELECTRONICS,
+            report_type=ReportType.FOUND,
+            public_description="TI-84 Plus CE found in Science Hall",
+            found_location=self.library,
+            current_holding_location=self.library
+        )
+        claim = Claim.objects.create(
+            report=found_report,
+            claimant=self.student,
+            claimant_statement="It is my calculator",
+            status=ClaimStatus.PENDING
+        )
+
+        # 1. Staff requests info with note
+        self.client.force_authenticate(user=self.library_staff)
+        decide_res = self.client.post(reverse('claim-decide', kwargs={'pk': claim.id, 'decision': 'request-info'}), {
+            "note": "Please specify the color of the slide cover and any initials engraved."
+        }, format='json')
+        self.assertEqual(decide_res.status_code, 200)
+        self.assertEqual(decide_res.data['status'], ClaimStatus.NEEDS_INFO)
+
+        claim.refresh_from_db()
+        self.assertEqual(claim.status, ClaimStatus.NEEDS_INFO)
+        self.assertIn("slide cover", claim.review_note_private)
+
+        # 2. Student adds requested evidence
+        self.client.force_authenticate(user=self.student)
+        ev_res = self.client.post(reverse('claim-evidence-add', kwargs={'pk': claim.id}), {
+            "evidence_type": "TEXT",
+            "private_value": "The slide cover is yellow with 'A.S.' scratched into the back."
+        }, format='json')
+        self.assertEqual(ev_res.status_code, 201)
+
+        # 3. Claim automatically transitions back to PENDING for staff re-review
+        claim.refresh_from_db()
+        self.assertEqual(claim.status, ClaimStatus.PENDING)
+
+    def test_protected_media_access_control(self):
+        import os
+        from django.conf import settings
+        from reports.models import ReportImage, ReportVisibility
+
+        os.makedirs(settings.MEDIA_ROOT / 'report_images', exist_ok=True)
+        test_filename = 'report_images/test_media_probe.jpg'
+        full_test_path = settings.MEDIA_ROOT / test_filename
+        with open(full_test_path, 'wb') as f:
+            f.write(b'\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xFF\xDB\x00C')
+
+        report = ItemReport.objects.create(
+            title="Test Camera Bag",
+            category=ItemCategory.BAG,
+            report_type=ReportType.FOUND,
+            public_description="Canvas camera bag",
+            visibility=ReportVisibility.ACTIVE
+        )
+        report_image = ReportImage.objects.create(
+            report=report,
+            image_file=test_filename,
+            content_type="image/jpeg",
+            size_bytes=30
+        )
+
+        try:
+            # 1. Active report image is accessible publicly
+            self.client.force_authenticate(user=None)
+            res1 = self.client.get(f"/media/{test_filename}")
+            self.assertEqual(res1.status_code, 200)
+            self.assertEqual(res1['X-Content-Type-Options'], 'nosniff')
+
+            # 2. If report is moderated to HIDDEN, unauthenticated request must be rejected (403)
+            report.visibility = ReportVisibility.HIDDEN
+            report.save()
+
+            res2 = self.client.get(f"/media/{test_filename}")
+            self.assertEqual(res2.status_code, 403)
+
+            # 3. Authorized staff can still view hidden report image
+            self.client.force_authenticate(user=self.admin_user)
+            res3 = self.client.get(f"/media/{test_filename}")
+            self.assertEqual(res3.status_code, 200)
+
+            # 4. Directory traversal attempt must be rejected (404)
+            res4 = self.client.get("/media/../etc/passwd")
+            self.assertEqual(res4.status_code, 404)
+        finally:
+            if 'res1' in locals() and hasattr(res1, 'close'):
+                res1.close()
+            if 'res3' in locals() and hasattr(res3, 'close'):
+                res3.close()
+            if full_test_path.exists():
+                full_test_path.unlink()
+
+
+

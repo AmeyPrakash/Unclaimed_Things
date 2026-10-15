@@ -219,4 +219,55 @@ class ReportAbuseView(APIView):
             "reason": flag.reason
         }, status=status.HTTP_201_CREATED)
 
+class ProtectedMediaView(APIView):
+    """
+    Secure media serving view (TRD Section 8).
+    - Prevents directory traversal attacks.
+    - If the requested media file belongs to a ReportImage whose Report is HIDDEN or REMOVED,
+      restricts access to authorized staff or the report creator.
+    - Attaches 'X-Content-Type-Options: nosniff' and private cache headers.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, path):
+        import os
+        import mimetypes
+        from django.http import FileResponse, Http404
+        from django.conf import settings
+
+        # 1. Normalize path and prevent directory traversal
+        clean_rel_path = os.path.normpath(path).replace('\\', '/')
+        if clean_rel_path.startswith('..') or clean_rel_path.startswith('/'):
+            raise Http404("Invalid file path.")
+
+        full_path = (settings.MEDIA_ROOT / clean_rel_path).resolve()
+        try:
+            full_path.relative_to(settings.MEDIA_ROOT.resolve())
+        except ValueError:
+            raise Http404("Access denied.")
+
+        if not full_path.is_file():
+            raise Http404("File not found.")
+
+        # 2. Check report image visibility if applicable
+        from .models import ReportImage, ReportVisibility
+        report_img = ReportImage.objects.filter(image_file=clean_rel_path).select_related('report').first()
+        if report_img and report_img.report:
+            if report_img.report.visibility in (ReportVisibility.HIDDEN, ReportVisibility.REMOVED):
+                user = request.user
+                is_authorized = user.is_authenticated and (user.is_staff or report_img.report.created_by == user)
+                if not is_authorized:
+                    return Response(
+                        {"error": {"code": "FORBIDDEN", "message": "This item image is currently hidden or restricted."}},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+        # 3. Serve file safely
+        content_type, _ = mimetypes.guess_type(str(full_path))
+        response = FileResponse(open(full_path, 'rb'), content_type=content_type or 'application/octet-stream')
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, max-age=3600'
+        return response
+
+
 

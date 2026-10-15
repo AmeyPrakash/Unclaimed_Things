@@ -114,11 +114,18 @@ class AddClaimEvidenceView(APIView):
             private_value=private_value,
             created_by=request.user
         )
+
+        # If claim was awaiting information, transition back to PENDING for staff re-review
+        if claim.status == ClaimStatus.NEEDS_INFO:
+            claim.status = ClaimStatus.PENDING
+            claim.save(update_fields=['status'])
+
         return Response(ClaimEvidenceSerializer(evidence).data, status=status.HTTP_201_CREATED)
 
 class DecideClaimView(APIView):
     """
-    Staff decision endpoint (approve / reject).
+    Staff decision endpoint (approve / reject / request-info).
+    Per PRD FR-05: Staff can approve, reject, or request more evidence.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -136,9 +143,11 @@ class DecideClaimView(APIView):
             claim.status = ClaimStatus.APPROVED
         elif decision == 'reject':
             claim.status = ClaimStatus.REJECTED
+        elif decision in ('request-info', 'needs-info'):
+            claim.status = ClaimStatus.NEEDS_INFO
         else:
             return Response(
-                {"error": {"code": "INVALID_DECISION", "message": "Decision must be 'approve' or 'reject'."}},
+                {"error": {"code": "INVALID_DECISION", "message": "Decision must be 'approve', 'reject', or 'request-info'."}},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -147,10 +156,11 @@ class DecideClaimView(APIView):
         claim.decision_at = timezone.now()
         claim.save()
 
+        action_name = "CLAIM_REQUEST_INFO" if claim.status == ClaimStatus.NEEDS_INFO else f"CLAIM_{decision.upper()}"
         from audit.models import AuditEvent
         AuditEvent.objects.create(
             actor=request.user,
-            action=f"CLAIM_{decision.upper()}",
+            action=action_name,
             entity_type="Claim",
             entity_id=str(claim.id),
             metadata_redacted={
@@ -161,6 +171,7 @@ class DecideClaimView(APIView):
         )
 
         return Response(ClaimSerializer(claim).data)
+
 
 class CompleteHandoverView(APIView):
     """

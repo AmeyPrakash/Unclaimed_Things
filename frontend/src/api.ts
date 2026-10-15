@@ -335,11 +335,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ evidence_type: evidenceType, private_value: privateValue }),
       }),
-    decide: (claimId: string, decision: 'approve' | 'reject', note: string) =>
+    decide: (claimId: string, decision: 'approve' | 'reject' | 'request-info', note: string) =>
       request<Claim>(`/claims/${claimId}/${decision}/`, {
         method: 'POST',
         body: JSON.stringify({ note }),
       }),
+
     completeHandover: (claimId: string) =>
       request<{ message: string }>(`/claims/${claimId}/complete-handover/`, { method: 'POST' }),
   },

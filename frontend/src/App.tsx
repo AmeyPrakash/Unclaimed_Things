@@ -324,16 +324,24 @@ export function App() {
     }
   };
 
-  const handleDecideClaim = async (claimId: string, decision: 'approve' | 'reject') => {
-    const note = prompt(`Enter staff review note for ${decision}:`) || '';
+  const handleDecideClaim = async (claimId: string, decision: 'approve' | 'reject' | 'request-info') => {
+    const promptMsg = decision === 'request-info'
+      ? 'Enter specific evidence request note for claimant (e.g. describe serial number or stickers):'
+      : `Enter staff review note for ${decision}:`;
+    const note = prompt(promptMsg) || '';
+    if (decision === 'request-info' && !note.trim()) {
+      setErrorNotice('A request note is required when requesting more info from claimant.');
+      return;
+    }
     try {
       await api.claims.decide(claimId, decision, note);
-      setSuccessNotice(`Claim successfully marked as ${decision.toUpperCase()}.`);
+      setSuccessNotice(`Claim successfully updated: ${decision.toUpperCase().replace('-', ' ')}.`);
       loadStaffData();
     } catch (err: unknown) {
       setErrorNotice(err instanceof Error ? err.message : 'Action failed');
     }
   };
+
 
   const handleCompleteHandover = async (claimId: string) => {
     if (!confirm('Confirm that the physical item has been handed over to the claimant?')) return;
@@ -1182,7 +1190,7 @@ export function App() {
                           </div>
 
                           <div className="report-actions">
-                            {claim.status === 'PENDING' && (
+                            {(claim.status === 'PENDING' || claim.status === 'NEEDS_INFO') && (
                               <>
                                 <button
                                   className="btn btn-primary"
@@ -1190,6 +1198,13 @@ export function App() {
                                   onClick={() => handleDecideClaim(claim.id, 'approve')}
                                 >
                                   Approve Claim
+                                </button>
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ height: '34px', fontSize: '0.8rem' }}
+                                  onClick={() => handleDecideClaim(claim.id, 'request-info')}
+                                >
+                                  Request Info
                                 </button>
                                 <button
                                   className="btn btn-danger"
@@ -1200,6 +1215,7 @@ export function App() {
                                 </button>
                               </>
                             )}
+
                             {claim.status === 'APPROVED' && (
                               <button
                                 className="btn btn-primary"
@@ -1355,6 +1371,42 @@ export function App() {
                         <strong>Staff Note:</strong> {claim.review_note_private}
                       </div>
                     )}
+
+                    {claim.status === 'NEEDS_INFO' && (
+                      <div style={{ marginTop: '0.75rem', padding: '0.65rem', border: '1px dashed var(--accent-blue)', borderRadius: 'var(--radius)', background: 'var(--surface-muted)' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-blue)', display: 'block', marginBottom: '0.35rem' }}>
+                          Action Required: Staff requested additional verification proof
+                        </span>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.35rem' }}>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Enter additional evidence (e.g. serial number, specific markings)..."
+                            id={`evidence-input-${claim.id}`}
+                            style={{ fontSize: '0.8rem', height: '32px' }}
+                          />
+                          <button
+                            className="btn btn-primary"
+                            style={{ height: '32px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            onClick={async () => {
+                              const input = document.getElementById(`evidence-input-${claim.id}`) as HTMLInputElement;
+                              if (!input || !input.value.trim()) return;
+                              try {
+                                await api.claims.addEvidence(claim.id, 'TEXT', input.value.trim());
+                                setSuccessNotice('Additional evidence submitted! Staff will re-review your claim.');
+                                loadMyClaims();
+                              } catch (err: unknown) {
+
+                                setErrorNotice(err instanceof Error ? err.message : 'Failed to submit evidence');
+                              }
+                            }}
+                          >
+                            Submit Evidence
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 ))}
               </div>
