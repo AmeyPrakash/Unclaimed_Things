@@ -91,8 +91,7 @@ desktop.ini
 *.swp
 *.swo
 *~
-#docs
-docs
+
 
 # Temporary files
 tmp/

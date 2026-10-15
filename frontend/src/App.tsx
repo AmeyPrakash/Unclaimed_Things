@@ -2,15 +2,47 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Shield, MapPin, Calendar,
   Moon, Sun, PlusCircle, CheckCircle, AlertCircle, ArrowRight,
-  LogOut, LogIn, ExternalLink, RefreshCw, Box, Lock, Upload, Image as ImageIcon
+  LogOut, LogIn, ExternalLink, RefreshCw, Box, Lock, Upload, Image as ImageIcon,
+  Activity, Users, FileText, Ban, Eye
 } from 'lucide-react';
-import { api, type User, type Location, type ItemReport, type MatchResponse, type Claim, type CustodyEvent } from './api';
+import {
+  api,
+  type User,
+  type Location,
+  type ItemReport,
+  type MatchResponse,
+  type Claim,
+  type CustodyEvent,
+  type AdminOverview,
+  type AuditEventItem,
+  type AdminReportItem,
+  type AdminUserItem
+} from './api';
 
 export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<'browse' | 'lost' | 'found' | 'claims'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'lost' | 'found' | 'claims' | 'admin'>('browse');
   const [staffSubTab, setStaffSubTab] = useState<'register' | 'claims' | 'transfers'>('register');
+  const [adminSubTab, setAdminSubTab] = useState<'overview' | 'audit' | 'moderation' | 'users'>('overview');
+
+  // Admin Data states
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [adminAuditEvents, setAdminAuditEvents] = useState<AuditEventItem[]>([]);
+  const [adminReports, setAdminReports] = useState<AdminReportItem[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUserItem[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminAuditSearch, setAdminAuditSearch] = useState('');
+  const [adminAuditActionFilter, setAdminAuditActionFilter] = useState('');
+  const [adminReportVisibility, setAdminReportVisibility] = useState('');
+  const [adminReportSearch, setAdminReportSearch] = useState('');
+  const [adminUserSearch, setAdminUserSearch] = useState('');
+  const [adminUserFilter, setAdminUserFilter] = useState('');
+  const [modModalReport, setModModalReport] = useState<AdminReportItem | null>(null);
+  const [modVisibility, setModVisibility] = useState<'ACTIVE' | 'HIDDEN' | 'REMOVED'>('HIDDEN');
+  const [modReason, setModReason] = useState('');
+  const [suspendModalUser, setSuspendModalUser] = useState<AdminUserItem | null>(null);
+  const [suspendReason, setSuspendReason] = useState('');
 
   // Data states
   const [reports, setReports] = useState<ItemReport[]>([]);
@@ -96,7 +128,101 @@ export function App() {
     if (activeTab === 'found' && currentUser) {
       loadStaffData();
     }
-  }, [activeTab, currentUser]);
+    if (activeTab === 'admin' && currentUser && (currentUser.is_staff || currentUser.is_superuser)) {
+      if (adminSubTab === 'overview') loadAdminOverview();
+      if (adminSubTab === 'audit') loadAdminAuditEvents();
+      if (adminSubTab === 'moderation') loadAdminReports();
+      if (adminSubTab === 'users') loadAdminUsers();
+    }
+  }, [activeTab, adminSubTab, currentUser, adminAuditActionFilter, adminReportVisibility, adminUserFilter]);
+
+  const loadAdminOverview = async () => {
+    setAdminLoading(true);
+    try {
+      const data = await api.admin.overview();
+      setAdminOverview(data);
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to load system overview');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const loadAdminAuditEvents = async () => {
+    setAdminLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (adminAuditActionFilter) params.action = adminAuditActionFilter;
+      if (adminAuditSearch.trim()) params.search = adminAuditSearch.trim();
+      const res = await api.admin.auditEvents(params);
+      const items = Array.isArray(res) ? res : res?.results || [];
+      setAdminAuditEvents(items);
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to load audit trail');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const loadAdminReports = async () => {
+    setAdminLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (adminReportVisibility) params.visibility = adminReportVisibility;
+      if (adminReportSearch.trim()) params.search = adminReportSearch.trim();
+      const res = await api.admin.reports(params);
+      const items = Array.isArray(res) ? res : res?.results || [];
+      setAdminReports(items);
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to load moderation reports');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const loadAdminUsers = async () => {
+    setAdminLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (adminUserFilter) params.is_active = adminUserFilter;
+      if (adminUserSearch.trim()) params.search = adminUserSearch.trim();
+      const res = await api.admin.users(params);
+      const items = Array.isArray(res) ? res : res?.results || [];
+      setAdminUsers(items);
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to load users');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const handleModerateReport = async () => {
+    if (!modModalReport) return;
+    try {
+      await api.admin.moderateReport(modModalReport.id, modVisibility, modReason.trim());
+      setSuccessNotice(`Report "${modModalReport.title}" visibility updated to ${modVisibility}.`);
+      setModModalReport(null);
+      setModReason('');
+      loadAdminReports();
+      loadReports();
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to moderate report');
+    }
+  };
+
+  const handleSuspendUser = async () => {
+    if (!suspendModalUser) return;
+    const targetStatus = !suspendModalUser.is_active;
+    try {
+      await api.admin.suspendUser(suspendModalUser.id, targetStatus, suspendReason.trim());
+      setSuccessNotice(`User ${suspendModalUser.email} ${targetStatus ? 'reactivated' : 'suspended'} successfully.`);
+      setSuspendModalUser(null);
+      setSuspendReason('');
+      loadAdminUsers();
+    } catch (err: any) {
+      setErrorNotice(err?.message || 'Failed to update user status');
+    }
+  };
 
   const toggleTheme = () => {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
@@ -467,6 +593,14 @@ export function App() {
               onClick={() => setActiveTab('claims')}
             >
               <CheckCircle size={16} /> My Claims
+            </button>
+          )}
+          {(currentUser?.is_staff || currentUser?.is_superuser) && (
+            <button
+              className={`nav-btn ${activeTab === 'admin' ? 'active' : ''}`}
+              onClick={() => setActiveTab('admin')}
+            >
+              <Shield size={16} /> Admin Workspace
             </button>
           )}
         </nav>
@@ -1182,6 +1316,499 @@ export function App() {
             )}
           </div>
         )}
+
+        {/* TAB 5: ADMIN WORKSPACE */}
+        {activeTab === 'admin' && (currentUser?.is_staff || currentUser?.is_superuser) && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.35rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Shield size={20} color="var(--accent-red)" /> Campus Governance & Admin Workspace
+                </h2>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Operational metrics, immutable audit trail, report moderation, and user governance.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ height: '36px', fontSize: '0.8rem' }}
+                  onClick={() => {
+                    if (adminSubTab === 'overview') loadAdminOverview();
+                    if (adminSubTab === 'audit') loadAdminAuditEvents();
+                    if (adminSubTab === 'moderation') loadAdminReports();
+                    if (adminSubTab === 'users') loadAdminUsers();
+                  }}
+                >
+                  <RefreshCw size={14} className={adminLoading ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Admin Subtabs */}
+            <div className="subtabs-bar" style={{ marginBottom: '1.5rem' }}>
+              <button
+                className={`subtab-btn ${adminSubTab === 'overview' ? 'active' : ''}`}
+                onClick={() => setAdminSubTab('overview')}
+              >
+                <Activity size={16} /> System Overview
+              </button>
+              <button
+                className={`subtab-btn ${adminSubTab === 'audit' ? 'active' : ''}`}
+                onClick={() => setAdminSubTab('audit')}
+              >
+                <FileText size={16} /> Audit Trail ({adminOverview?.system.audit_events_count ?? '...'})
+              </button>
+              <button
+                className={`subtab-btn ${adminSubTab === 'moderation' ? 'active' : ''}`}
+                onClick={() => setAdminSubTab('moderation')}
+              >
+                <Eye size={16} /> Content Moderation
+              </button>
+              <button
+                className={`subtab-btn ${adminSubTab === 'users' ? 'active' : ''}`}
+                onClick={() => setAdminSubTab('users')}
+              >
+                <Users size={16} /> User Governance ({adminOverview?.users.total ?? '...'})
+              </button>
+            </div>
+
+            {/* SUBTAB 1: SYSTEM OVERVIEW */}
+            {adminSubTab === 'overview' && (
+              <div>
+                {adminLoading && !adminOverview ? (
+                  <div className="state-box">
+                    <RefreshCw size={24} className="animate-spin" />
+                    <p>Loading administrative telemetry...</p>
+                  </div>
+                ) : adminOverview ? (
+                  <div>
+                    {/* Stat Cards Grid */}
+                    <div className="stats-grid">
+                      <div className="stat-card">
+                        <span className="stat-title">Total Belongings</span>
+                        <span className="stat-value">{adminOverview.reports.total}</span>
+                        <span className="stat-subtext">
+                          {adminOverview.reports.lost_open} Lost Open • {adminOverview.reports.found_open} Found Open
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>
+                          ✓ {adminOverview.reports.returned} Recovered & Returned
+                        </span>
+                      </div>
+
+                      <div className="stat-card">
+                        <span className="stat-title">Claims Pipeline</span>
+                        <span className="stat-value">{adminOverview.claims.total}</span>
+                        <span className="stat-subtext">
+                          <strong style={{ color: 'var(--accent-red)' }}>{adminOverview.claims.pending}</strong> Pending Review
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--accent-blue)', fontWeight: 600 }}>
+                          {adminOverview.claims.approved} Approved • {adminOverview.claims.completed} Handed Over
+                        </span>
+                      </div>
+
+                      <div className="stat-card">
+                        <span className="stat-title">Campus Custody</span>
+                        <span className="stat-value">{adminOverview.custody.total_transfers}</span>
+                        <span className="stat-subtext">
+                          <strong style={{ color: 'var(--warning)' }}>{adminOverview.custody.pending_transfers}</strong> Awaiting Destination Receipt
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          Across {adminOverview.locations.active_count} Campus Facilities
+                        </span>
+                      </div>
+
+                      <div className="stat-card">
+                        <span className="stat-title">Campus Accounts</span>
+                        <span className="stat-value">{adminOverview.users.total}</span>
+                        <span className="stat-subtext">
+                          {adminOverview.users.active} Active • {adminOverview.users.staff} Staff Accounts
+                        </span>
+                        {adminOverview.users.suspended > 0 ? (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--danger)', fontWeight: 600 }}>
+                            ⚠ {adminOverview.users.suspended} Suspended
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>
+                            ✓ Zero Accounts Suspended
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* System & AI Telemetry Banner */}
+                    <div className="card" style={{ marginBottom: '1.5rem', background: 'var(--surface-muted)' }}>
+                      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Activity size={18} color="var(--accent-blue)" /> NVIDIA NIM Vector Engine & pgvector Health
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', fontSize: '0.85rem' }}>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Vector Embeddings API</span>
+                          <span className={`badge ${adminOverview.system.nim_enabled ? 'badge-success' : 'badge-status'}`}>
+                            {adminOverview.system.nim_enabled ? 'Active / Online' : 'Keyword Only'}
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Frontier NIM Model</span>
+                          <strong style={{ fontFamily: 'monospace' }}>{adminOverview.system.nim_model}</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Indexed Embeddings (2048-dim)</span>
+                          <strong>{adminOverview.system.embeddings_count} items embedded</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Immutable Audit Events</span>
+                          <strong>{adminOverview.system.audit_events_count} events recorded</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* SUBTAB 2: AUDIT TRAIL */}
+            {adminSubTab === 'audit' && (
+              <div>
+                {/* Search & Filters */}
+                <div className="search-bar-wrap" style={{ marginBottom: '1rem' }}>
+                  <div className="search-input-box" style={{ flex: 2 }}>
+                    <Search size={16} />
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Search audit trail by actor, action, request ID, or entity ID..."
+                      value={adminAuditSearch}
+                      onChange={(e) => setAdminAuditSearch(e.target.value)}
+                    />
+                  </div>
+
+                  <select
+                    className="form-select filter-select"
+                    value={adminAuditActionFilter}
+                    onChange={(e) => setAdminAuditActionFilter(e.target.value)}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">All Audit Actions</option>
+                    <option value="REPORT_MODERATED">Report Moderation</option>
+                    <option value="USER_">User Governance (Suspend/Activate)</option>
+                    <option value="CLAIM_">Claim Decisions</option>
+                    <option value="HANDOVER_COMPLETED">Handover Completion</option>
+                    <option value="CUSTODY_TRANSFER">Custody Transfers</option>
+                  </select>
+
+                  <button className="btn btn-secondary" onClick={loadAdminAuditEvents}>
+                    Filter
+                  </button>
+                </div>
+
+                {adminLoading ? (
+                  <div className="state-box">
+                    <RefreshCw size={24} className="animate-spin" />
+                    <p>Fetching immutable audit ledger...</p>
+                  </div>
+                ) : adminAuditEvents.length === 0 ? (
+                  <div className="state-box">
+                    <FileText size={32} />
+                    <p>No audit events match current criteria.</p>
+                  </div>
+                ) : (
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Timestamp</th>
+                          <th>Action</th>
+                          <th>Actor</th>
+                          <th>Target Entity</th>
+                          <th>Redacted Audit Metadata</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminAuditEvents.map((evt) => {
+                          const isDestructive = evt.action.includes('REMOVED') || evt.action.includes('SUSPENDED') || evt.action.includes('REJECT');
+                          const isSuccess = evt.action.includes('ACTIVE') || evt.action.includes('COMPLETED') || evt.action.includes('APPROVE') || evt.action.includes('ACTIVATED');
+                          return (
+                            <tr key={evt.id}>
+                              <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
+                                {new Date(evt.created_at).toLocaleString()}
+                              </td>
+                              <td>
+                                <span className={`badge ${isDestructive ? 'badge-danger' : isSuccess ? 'badge-success' : 'badge-match'}`}>
+                                  {evt.action}
+                                </span>
+                              </td>
+                              <td>
+                                <strong>{evt.actor_email || 'System'}</strong>
+                                {evt.actor_name && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>{evt.actor_name}</span>}
+                              </td>
+                              <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                                <div>{evt.entity_type}</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{evt.entity_id}</div>
+                              </td>
+                              <td style={{ maxWidth: '300px' }}>
+                                <pre style={{ fontSize: '0.75rem', background: 'var(--surface-muted)', padding: '0.35rem 0.5rem', borderRadius: '4px', overflowX: 'auto', margin: 0 }}>
+                                  {JSON.stringify(evt.metadata_redacted || {}, null, 1)}
+                                </pre>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUBTAB 3: CONTENT MODERATION */}
+            {adminSubTab === 'moderation' && (
+              <div>
+                <div className="search-bar-wrap" style={{ marginBottom: '1rem' }}>
+                  <div className="search-input-box" style={{ flex: 2 }}>
+                    <Search size={16} />
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Search reports by title, description, or author email..."
+                      value={adminReportSearch}
+                      onChange={(e) => setAdminReportSearch(e.target.value)}
+                    />
+                  </div>
+
+                  <select
+                    className="form-select filter-select"
+                    value={adminReportVisibility}
+                    onChange={(e) => setAdminReportVisibility(e.target.value)}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">All Visibility States</option>
+                    <option value="ACTIVE">Active (Publicly Visible)</option>
+                    <option value="HIDDEN">Hidden (Suppressed)</option>
+                    <option value="REMOVED">Removed (Takedown)</option>
+                  </select>
+
+                  <button className="btn btn-secondary" onClick={loadAdminReports}>
+                    Filter
+                  </button>
+                </div>
+
+                {adminLoading ? (
+                  <div className="state-box">
+                    <RefreshCw size={24} className="animate-spin" />
+                    <p>Loading reports moderation list...</p>
+                  </div>
+                ) : adminReports.length === 0 ? (
+                  <div className="state-box">
+                    <Eye size={32} />
+                    <p>No reports match moderation filters.</p>
+                  </div>
+                ) : (
+                  <div className="report-list">
+                    {adminReports.map((item) => (
+                      <div key={item.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div className="report-item-header">
+                          <div>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+                              <span className={`badge ${item.report_type === 'LOST' ? 'badge-lost' : 'badge-found'}`}>
+                                {item.report_type}
+                              </span>
+                              <span className="badge badge-status">{item.category}</span>
+                              <span className={`badge ${item.visibility === 'ACTIVE' ? 'badge-success' : item.visibility === 'HIDDEN' ? 'badge-warning' : 'badge-danger'}`}>
+                                Visibility: {item.visibility}
+                              </span>
+                              <span className="badge badge-status">Status: {item.status}</span>
+                            </div>
+
+                            <h3 style={{ fontSize: '1.05rem', fontWeight: 600 }}>{item.title}</h3>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              Author: <strong>{item.created_by_email || 'Staff Recorded'}</strong> • Reported: {new Date(item.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <div className="report-actions">
+                            {item.visibility !== 'ACTIVE' && (
+                              <button
+                                className="btn btn-secondary"
+                                style={{ height: '34px', fontSize: '0.8rem', borderColor: 'var(--success)', color: 'var(--success)' }}
+                                onClick={() => {
+                                  setModModalReport(item);
+                                  setModVisibility('ACTIVE');
+                                  setModReason('Restored to public visibility');
+                                }}
+                              >
+                                Restore Active
+                              </button>
+                            )}
+                            {item.visibility !== 'HIDDEN' && (
+                              <button
+                                className="btn btn-secondary"
+                                style={{ height: '34px', fontSize: '0.8rem', borderColor: 'var(--warning)', color: 'var(--warning)' }}
+                                onClick={() => {
+                                  setModModalReport(item);
+                                  setModVisibility('HIDDEN');
+                                  setModReason('Inappropriate content / under investigation');
+                                }}
+                              >
+                                Hide
+                              </button>
+                            )}
+                            {item.visibility !== 'REMOVED' && (
+                              <button
+                                className="btn btn-danger"
+                                style={{ height: '34px', fontSize: '0.8rem' }}
+                                onClick={() => {
+                                  setModModalReport(item);
+                                  setModVisibility('REMOVED');
+                                  setModReason('Violates campus policy / fraud attempt');
+                                }}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <p style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{item.public_description}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUBTAB 4: USER GOVERNANCE */}
+            {adminSubTab === 'users' && (
+              <div>
+                <div className="search-bar-wrap" style={{ marginBottom: '1rem' }}>
+                  <div className="search-input-box" style={{ flex: 2 }}>
+                    <Search size={16} />
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Search users by email or display name..."
+                      value={adminUserSearch}
+                      onChange={(e) => setAdminUserSearch(e.target.value)}
+                    />
+                  </div>
+
+                  <select
+                    className="form-select filter-select"
+                    value={adminUserFilter}
+                    onChange={(e) => setAdminUserFilter(e.target.value)}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">All Accounts</option>
+                    <option value="true">Active Only</option>
+                    <option value="false">Suspended Only</option>
+                  </select>
+
+                  <button className="btn btn-secondary" onClick={loadAdminUsers}>
+                    Filter
+                  </button>
+                </div>
+
+                {adminLoading ? (
+                  <div className="state-box">
+                    <RefreshCw size={24} className="animate-spin" />
+                    <p>Loading registered campus accounts...</p>
+                  </div>
+                ) : adminUsers.length === 0 ? (
+                  <div className="state-box">
+                    <Users size={32} />
+                    <p>No user accounts match current criteria.</p>
+                  </div>
+                ) : (
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Role Badges</th>
+                          <th>Facility Memberships</th>
+                          <th>Account Status</th>
+                          <th>Joined</th>
+                          <th>Governance Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminUsers.map((u) => {
+                          const isSelf = currentUser?.id === u.id;
+                          return (
+                            <tr key={u.id}>
+                              <td>
+                                <strong>{u.email}</strong>
+                                {u.display_name && (
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block' }}>
+                                    {u.display_name}
+                                  </span>
+                                )}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                  {u.is_superuser && <span className="badge badge-lost">Admin</span>}
+                                  {u.is_staff && !u.is_superuser && <span className="badge badge-match">Staff</span>}
+                                  {!u.is_staff && !u.is_superuser && <span className="badge badge-status">Student</span>}
+                                </div>
+                              </td>
+                              <td style={{ fontSize: '0.8rem' }}>
+                                {u.memberships && u.memberships.length > 0 ? (
+                                  u.memberships.map((m) => (
+                                    <div key={m.id} style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>
+                                      {m.location_name} ({m.role})
+                                    </div>
+                                  ))
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)' }}>General User</span>
+                                )}
+                              </td>
+                              <td>
+                                <span className={`badge ${u.is_active ? 'badge-success' : 'badge-danger'}`}>
+                                  {u.is_active ? 'Active' : 'Suspended'}
+                                </span>
+                              </td>
+                              <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                {new Date(u.created_at).toLocaleDateString()}
+                              </td>
+                              <td>
+                                {isSelf ? (
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current User</span>
+                                ) : u.is_active ? (
+                                  <button
+                                    className="btn btn-danger"
+                                    style={{ height: '32px', fontSize: '0.75rem', padding: '0 0.6rem' }}
+                                    onClick={() => {
+                                      setSuspendModalUser(u);
+                                      setSuspendReason('Administrative suspension for policy violation');
+                                    }}
+                                  >
+                                    <Ban size={12} /> Suspend
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ height: '32px', fontSize: '0.75rem', padding: '0 0.6rem', borderColor: 'var(--success)', color: 'var(--success)' }}
+                                    onClick={() => {
+                                      setSuspendModalUser(u);
+                                      setSuspendReason('Account appeal reviewed and accepted');
+                                    }}
+                                  >
+                                    Reactivate
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* MODAL 1: AI & KEYWORD MATCHES */}
@@ -1487,6 +2114,89 @@ export function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MODERATE REPORT */}
+      {modModalReport && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3>Moderate Report Visibility</h3>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text)' }}
+                onClick={() => setModModalReport(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ marginBottom: '1rem', fontSize: '0.9rem' }}>
+              Setting visibility of <strong>"{modModalReport.title}"</strong> to <strong style={{ color: modVisibility === 'ACTIVE' ? 'var(--success)' : modVisibility === 'HIDDEN' ? 'var(--warning)' : 'var(--danger)' }}>{modVisibility}</strong>.
+            </div>
+            <div className="form-group">
+              <label className="form-label">Audit Reason for Action:</label>
+              <textarea
+                className="form-textarea"
+                rows={3}
+                placeholder="Enter audit explanation (e.g., spam link, duplicate, resolved dispute)..."
+                value={modReason}
+                onChange={(e) => setModReason(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setModModalReport(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleModerateReport}>
+                Confirm Moderation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SUSPEND / REACTIVATE USER */}
+      {suspendModalUser && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3>{suspendModalUser.is_active ? 'Suspend User Account' : 'Reactivate User Account'}</h3>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text)' }}
+                onClick={() => setSuspendModalUser(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ marginBottom: '1rem', fontSize: '0.9rem' }}>
+              {suspendModalUser.is_active ? (
+                <span>Are you sure you want to suspend <strong>{suspendModalUser.email}</strong>? The user will be unable to sign in or submit reports and claims.</span>
+              ) : (
+                <span>Reactivating <strong>{suspendModalUser.email}</strong> will restore standard access privileges.</span>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Audit Reason:</label>
+              <textarea
+                className="form-textarea"
+                rows={3}
+                placeholder="Reason for suspension or reactivation..."
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setSuspendModalUser(null)}>
+                Cancel
+              </button>
+              <button
+                className={`btn ${suspendModalUser.is_active ? 'btn-danger' : 'btn-primary'}`}
+                onClick={handleSuspendUser}
+              >
+                Confirm {suspendModalUser.is_active ? 'Suspension' : 'Reactivation'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -146,6 +146,19 @@ class DecideClaimView(APIView):
         claim.decision_at = timezone.now()
         claim.save()
 
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user,
+            action=f"CLAIM_{decision.upper()}",
+            entity_type="Claim",
+            entity_id=str(claim.id),
+            metadata_redacted={
+                "report_id": str(claim.report.id),
+                "decision": decision,
+                "claimant_email": claim.claimant.email
+            }
+        )
+
         return Response(ClaimSerializer(claim).data)
 
 class CompleteHandoverView(APIView):
@@ -172,6 +185,7 @@ class CompleteHandoverView(APIView):
 
         from django.db import transaction
         from custody.models import CustodyEvent, CustodyEventType
+        from audit.models import AuditEvent
 
         with transaction.atomic():
             claim.status = ClaimStatus.COMPLETED
@@ -188,6 +202,18 @@ class CompleteHandoverView(APIView):
                 to_location=None,
                 actor=request.user,
                 note_private=f"Handover completed to claimant {claim.claimant.email}"
+            )
+
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="HANDOVER_COMPLETED",
+                entity_type="Claim",
+                entity_id=str(claim.id),
+                metadata_redacted={
+                    "report_id": str(report.id),
+                    "holding_location": report.current_holding_location.name if report.current_holding_location else None,
+                    "claimant_email": claim.claimant.email
+                }
             )
 
         return Response({"message": "Handover successfully completed and item marked as RETURNED."})

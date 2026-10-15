@@ -3,7 +3,103 @@ export interface User {
   email: string;
   display_name: string;
   is_staff: boolean;
+  is_superuser?: boolean;
+  is_active?: boolean;
   created_at: string;
+}
+
+export interface AdminOverview {
+  reports: {
+    total: number;
+    lost_open: number;
+    found_open: number;
+    returned: number;
+    withdrawn: number;
+    expired: number;
+    hidden: number;
+    removed: number;
+  };
+  claims: {
+    total: number;
+    pending: number;
+    approved: number;
+    completed: number;
+    rejected: number;
+  };
+  custody: {
+    total_transfers: number;
+    pending_transfers: number;
+  };
+  users: {
+    total: number;
+    active: number;
+    suspended: number;
+    staff: number;
+  };
+  locations: {
+    active_count: number;
+  };
+  system: {
+    nim_enabled: boolean;
+    nim_model: string;
+    embeddings_count: number;
+    audit_events_count: number;
+  };
+}
+
+export interface AuditEventItem {
+  id: string;
+  actor: string | null;
+  actor_email: string | null;
+  actor_name: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  request_id: string;
+  metadata_redacted: Record<string, any>;
+  created_at: string;
+}
+
+export interface AdminReportItem {
+  id: string;
+  report_type: 'LOST' | 'FOUND';
+  category: string;
+  title: string;
+  public_description: string;
+  status: 'OPEN' | 'WITHDRAWN' | 'EXPIRED' | 'RETURNED';
+  visibility: 'ACTIVE' | 'HIDDEN' | 'REMOVED';
+  last_seen_at?: string;
+  found_at?: string;
+  last_seen_location_name?: string;
+  found_location_name?: string;
+  current_holding_location_name?: string;
+  created_by_email?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminUserItem {
+  id: string;
+  email: string;
+  display_name: string;
+  is_active: boolean;
+  is_staff: boolean;
+  is_superuser: boolean;
+  created_at: string;
+  updated_at: string;
+  memberships: {
+    id: string;
+    location_name: string;
+    role: string;
+    is_active: boolean;
+  }[];
+}
+
+export interface PaginatedResponse<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
 }
 
 export interface Location {
@@ -246,6 +342,32 @@ export const api = {
       request<CustodyEvent>(`/custody/transfers/${custodyId}/accept/`, {
         method: 'POST',
         body: JSON.stringify({ note_private: note }),
+      }),
+  },
+
+  admin: {
+    overview: () => request<AdminOverview>('/admin/overview/'),
+    auditEvents: (params?: { action?: string; search?: string }) => {
+      const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
+      return request<PaginatedResponse<AuditEventItem> | AuditEventItem[]>(`/admin/audit-events/${qs ? `?${qs}` : ''}`);
+    },
+    reports: (params?: { visibility?: string; report_type?: string; search?: string }) => {
+      const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
+      return request<PaginatedResponse<AdminReportItem> | AdminReportItem[]>(`/admin/reports/${qs ? `?${qs}` : ''}`);
+    },
+    moderateReport: (id: string, visibility: 'ACTIVE' | 'HIDDEN' | 'REMOVED', reason?: string) =>
+      request<{ message: string; report: AdminReportItem }>(`/admin/reports/${id}/moderate/`, {
+        method: 'POST',
+        body: JSON.stringify({ visibility, reason }),
+      }),
+    users: (params?: { search?: string; is_active?: string }) => {
+      const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
+      return request<PaginatedResponse<AdminUserItem> | AdminUserItem[]>(`/admin/users/${qs ? `?${qs}` : ''}`);
+    },
+    suspendUser: (id: string, is_active: boolean, reason?: string) =>
+      request<{ message: string; user: AdminUserItem }>(`/admin/users/${id}/suspend/`, {
+        method: 'POST',
+        body: JSON.stringify({ is_active, reason }),
       }),
   },
 

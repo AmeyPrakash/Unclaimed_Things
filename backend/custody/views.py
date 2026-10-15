@@ -60,6 +60,20 @@ class RequestCustodyTransferView(APIView):
             note_private=request.data.get('note_private', '')
         )
 
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="CUSTODY_TRANSFER_REQUESTED",
+            entity_type="CustodyEvent",
+            entity_id=str(event.id),
+            metadata_redacted={
+                "report_id": str(report.id),
+                "from_location": event.from_location.name if event.from_location else None,
+                "to_location": to_location.name,
+                "note": event.note_private
+            }
+        )
+
         return Response(CustodyEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 class AcceptCustodyTransferView(APIView):
@@ -89,6 +103,19 @@ class AcceptCustodyTransferView(APIView):
                 actor=request.user,
                 related_event=event,
                 note_private=request.data.get('note_private', 'Transfer accepted.')
+            )
+
+            from audit.models import AuditEvent
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="CUSTODY_TRANSFER_ACCEPTED",
+                entity_type="CustodyEvent",
+                entity_id=str(new_event.id),
+                metadata_redacted={
+                    "report_id": str(report.id),
+                    "from_location": new_event.from_location.name if new_event.from_location else None,
+                    "to_location": new_event.to_location.name if new_event.to_location else None
+                }
             )
 
         return Response(CustodyEventSerializer(new_event).data)

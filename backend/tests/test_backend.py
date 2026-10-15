@@ -7,7 +7,7 @@ from accounts.models import User
 from locations.models import Location, LocationType, LocationMembership, MembershipRole
 from reports.models import ItemReport, ReportPrivateDetail, ReportType, ItemCategory, ReportStatus, ReportImage
 from reports.serializers import PublicItemReportSerializer
-from claims.models import Claim, ClaimStatus
+from claims.models import Claim, ClaimStatus, ClaimEvidence
 from custody.models import CustodyEvent, CustodyEventType
 
 class BackendFoundationTests(APITestCase):
@@ -51,6 +51,11 @@ class BackendFoundationTests(APITestCase):
             user=self.security_staff,
             location=self.security_hq,
             role=MembershipRole.LOCATION_STAFF
+        )
+        self.admin_user = User.objects.create_superuser(
+            email="admin@campus.edu",
+            password="AdminPass123!",
+            display_name="Campus Admin"
         )
 
     def test_health_endpoints(self):
@@ -258,3 +263,158 @@ class BackendFoundationTests(APITestCase):
         self.client.force_authenticate(user=self.other_student)
         idor_res = self.client.get(reverse('claim-detail', kwargs={'pk': claim.id}))
         self.assertEqual(idor_res.status_code, 403, "Other students must not be able to read foreign claims")
+
+    def test_admin_overview_and_permissions(self):
+        # Regular student cannot access admin overview
+        self.client.force_authenticate(user=self.student)
+        forbidden_res = self.client.get(reverse('admin-overview'))
+        self.assertEqual(forbidden_res.status_code, 403)
+
+        # Admin user can access admin overview
+        self.client.force_authenticate(user=self.admin_user)
+        overview_res = self.client.get(reverse('admin-overview'))
+        self.assertEqual(overview_res.status_code, 200)
+        self.assertIn('reports', overview_res.data)
+        self.assertIn('claims', overview_res.data)
+        self.assertIn('users', overview_res.data)
+        self.assertIn('system', overview_res.data)
+
+    def test_admin_report_moderation_and_audit_events(self):
+        report = ItemReport.objects.create(
+            title="Spam lost wallet",
+            category=ItemCategory.OTHER,
+            report_type=ReportType.LOST,
+            public_description="Click this suspicious scam link"
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Moderate report to HIDDEN
+        mod_res = self.client.post(reverse('admin-report-moderate', kwargs={'pk': report.id}), {
+            "visibility": "HIDDEN",
+            "reason": "Contains suspicious promotional link"
+        }, format='json')
+        self.assertEqual(mod_res.status_code, 200)
+
+        report.refresh_from_db()
+        self.assertEqual(report.visibility, "HIDDEN")
+
+        # Verify audit log captures event
+        audit_res = self.client.get(reverse('admin-audit-events') + f"?search={report.id}")
+        self.assertEqual(audit_res.status_code, 200)
+        audit_items = audit_res.data.get('results', audit_res.data)
+        self.assertGreaterEqual(len(audit_items), 1)
+        self.assertEqual(audit_items[0]['action'], "REPORT_MODERATED_HIDDEN")
+
+    def test_admin_user_suspension_lifecycle(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Suspend other_student
+        suspend_res = self.client.post(reverse('admin-user-suspend', kwargs={'pk': self.other_student.id}), {
+            "is_active": False,
+            "reason": "Suspected spam generation"
+        }, format='json')
+        self.assertEqual(suspend_res.status_code, 200)
+
+        self.other_student.refresh_from_db()
+        self.assertFalse(self.other_student.is_active)
+
+        # Suspended student cannot authenticate
+        self.client.logout()
+        login_res = self.client.post(reverse('auth-login'), {
+            "email": "other@campus.edu",
+            "password": "Password123!"
+        })
+        self.assertEqual(login_res.status_code, 400)
+        self.assertIn("inactive", str(login_res.data).lower())
+
+        # Admin reactivates student
+        self.client.force_authenticate(user=self.admin_user)
+        reactivate_res = self.client.post(reverse('admin-user-suspend', kwargs={'pk': self.other_student.id}), {
+            "is_active": True,
+            "reason": "Appeal accepted"
+        }, format='json')
+        self.assertEqual(reactivate_res.status_code, 200)
+
+        self.other_student.refresh_from_db()
+        self.assertTrue(self.other_student.is_active)
+
+    def test_data_retention_policy_enforcement(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from django.core.management import call_command
+        from audit.models import AuditEvent
+
+        now = timezone.now()
+        old_time = now - timedelta(days=200)
+
+        # 1. Old withdrawn report (past 30 days)
+        withdrawn_rep = ItemReport.objects.create(
+            title="Old Withdrawn Gloves",
+            category=ItemCategory.CLOTHING,
+            report_type=ReportType.LOST,
+            public_description="Withdrawn long ago",
+            status=ReportStatus.WITHDRAWN
+        )
+        ItemReport.objects.filter(pk=withdrawn_rep.pk).update(updated_at=old_time)
+
+        # 2. Old returned report with private details (past 90 days)
+        returned_rep = ItemReport.objects.create(
+            title="Returned Old Laptop",
+            category=ItemCategory.ELECTRONICS,
+            report_type=ReportType.FOUND,
+            public_description="Dell laptop returned to owner",
+            status=ReportStatus.RETURNED,
+            found_location=self.library,
+            current_holding_location=self.library
+        )
+        ReportPrivateDetail.objects.create(
+            report=returned_rep,
+            private_description="Serial: DELL-999-SECRET",
+            distinguishing_details={"serial": "DELL-999"}
+        )
+        ItemReport.objects.filter(pk=returned_rep.pk).update(updated_at=old_time)
+
+        # 3. Old completed claim with evidence (past 180 days)
+        claim = Claim.objects.create(
+            report=returned_rep,
+            claimant=self.student,
+            claimant_statement="My secret serial is DELL-999",
+            status=ClaimStatus.COMPLETED
+        )
+        ClaimEvidence.objects.create(
+            claim=claim,
+            evidence_type="TEXT",
+            private_value="Receipt screenshot image key",
+            created_by=self.student
+        )
+        Claim.objects.filter(pk=claim.pk).update(updated_at=old_time)
+
+        # First run dry-run: records must NOT change
+        call_command('enforce_retention_policy', dry_run=True)
+        self.assertTrue(ItemReport.objects.filter(pk=withdrawn_rep.pk).exists())
+        self.assertTrue(ReportPrivateDetail.objects.filter(report=returned_rep).exists())
+        self.assertTrue(ClaimEvidence.objects.filter(claim=claim).exists())
+
+        # Now run active retention enforcement
+        call_command('enforce_retention_policy')
+
+        # Verify withdrawn report purged
+        self.assertFalse(ItemReport.objects.filter(pk=withdrawn_rep.pk).exists())
+
+        # Verify returned report private detail deleted & anonymized
+        self.assertFalse(ReportPrivateDetail.objects.filter(report=returned_rep).exists())
+        returned_rep.refresh_from_db()
+        self.assertEqual(returned_rep.public_description, "[ANONYMIZED_HISTORICAL_RECORD]")
+        self.assertEqual(returned_rep.visibility, "REMOVED")
+
+        # Verify claim evidence purged and statement redacted
+        self.assertFalse(ClaimEvidence.objects.filter(claim=claim).exists())
+        claim.refresh_from_db()
+        self.assertEqual(claim.claimant_statement, "[REDACTED_BY_RETENTION_POLICY]")
+
+        # Verify audit records generated
+        self.assertTrue(AuditEvent.objects.filter(action="RETENTION_PURGE_WITHDRAWN_REPORT").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="RETENTION_ANONYMIZE_RETURNED_REPORT").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="RETENTION_PURGE_CLAIM_EVIDENCE").exists())
+
+

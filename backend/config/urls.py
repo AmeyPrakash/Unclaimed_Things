@@ -16,6 +16,7 @@ api_v1_patterns = [
     path('', include('matching.urls')),
     path('', include('claims.urls')),
     path('', include('custody.urls')),
+    path('', include('audit.urls')),
 ]
 
 urlpatterns = [
