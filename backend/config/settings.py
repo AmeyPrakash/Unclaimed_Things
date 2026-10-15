@@ -3,6 +3,7 @@ Django settings for The Unclaimed Things Network (UTN).
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
@@ -83,15 +84,29 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database configuration (Neon Postgres + pgvector)
-database_url = os.environ.get('DATABASE_URL')
+# Tests and migrations require direct (unpooled) connections to avoid PgBouncer transaction/session limits
+is_testing_or_migration = any(cmd in sys.argv for cmd in ('test', 'migrate', 'makemigrations'))
+if is_testing_or_migration and os.environ.get('DATABASE_URL_UNPOOLED'):
+    database_url = os.environ.get('DATABASE_URL_UNPOOLED')
+else:
+    database_url = os.environ.get('DATABASE_URL')
+conn_age = 600
+
 if database_url:
     DATABASES = {
         'default': dj_database_url.config(
             default=database_url,
-            conn_max_age=600,
+            conn_max_age=conn_age,
             ssl_require=True
         )
     }
+    DATABASES['default'].setdefault('OPTIONS', {})
+    DATABASES['default']['OPTIONS'].update({
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 5,
+    })
 else:
     DATABASES = {
         'default': {
@@ -107,6 +122,12 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+if 'test' in sys.argv:
+    PASSWORD_HASHERS = [
+        'django.contrib.auth.hashers.MD5PasswordHasher',
+    ]
+
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'

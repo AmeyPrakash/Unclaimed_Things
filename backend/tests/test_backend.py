@@ -10,6 +10,8 @@ from reports.models import ItemReport, ReportPrivateDetail, ReportType, ItemCate
 from reports.serializers import PublicItemReportSerializer
 from claims.models import Claim, ClaimStatus, ClaimEvidence
 from custody.models import CustodyEvent, CustodyEventType
+from unittest.mock import patch
+from django.core.management import call_command
 from audit.models import AuditEvent
 
 class BackendFoundationTests(APITestCase):
@@ -734,10 +736,16 @@ class BackendFoundationTests(APITestCase):
             res4 = self.client.get("/media/../etc/passwd")
             self.assertEqual(res4.status_code, 404)
         finally:
-            if 'res1' in locals() and hasattr(res1, 'close'):
-                res1.close()
-            if 'res3' in locals() and hasattr(res3, 'close'):
-                res3.close()
+            for r in ('res1', 'res3'):
+                if r in locals():
+                    resp = locals()[r]
+                    for closer in getattr(resp, '_resource_closers', []):
+                        try:
+                            closer()
+                        except Exception:
+                            pass
+                    if hasattr(resp, '_resource_closers'):
+                        resp._resource_closers.clear()
             if full_test_path.exists():
                 full_test_path.unlink()
 
@@ -760,3 +768,13 @@ class BackendFoundationTests(APITestCase):
         self.assertEqual(res.get('X-Content-Type-Options'), 'nosniff')
         self.assertEqual(res.get('X-Frame-Options'), 'DENY')
         self.assertEqual(res.get('Referrer-Policy'), 'strict-origin-when-cross-origin')
+
+    @patch('matching.services.NimEmbeddingAdapter.get_embedding')
+    def test_simulate_campus_pilot_command(self, mock_nim):
+        mock_nim.return_value = [0.05] * 2048
+        out = io.StringIO()
+        call_command('simulate_campus_pilot', pause=0, stdout=out)
+        output = out.getvalue()
+        self.assertIn("CAMPUS PILOT SIMULATION COMPLETED SUCCESSFULLY", output)
+        self.assertIn("10/10 STEPS PASSED", output)
+

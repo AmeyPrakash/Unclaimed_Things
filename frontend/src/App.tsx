@@ -2143,6 +2143,14 @@ export function App() {
                     type="button"
                     className="btn btn-secondary"
                     style={{ height: '28px', fontSize: '0.75rem', padding: '0 0.5rem' }}
+                    onClick={() => setAuthForm({ ...authForm, email: 'security.staff@campus.edu', password: 'StaffPass123!' })}
+                  >
+                    Security Staff
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '0.75rem', padding: '0 0.5rem' }}
                     onClick={() => setAuthForm({ ...authForm, email: 'admin@campus.edu', password: 'AdminPass123!' })}
                   >
                     Admin
