@@ -20,6 +20,9 @@ class BackendFoundationTests(APITestCase):
 
     def setUp(self):
         cache.clear()
+        self.nim_patcher = patch('matching.services.NimEmbeddingAdapter.get_embedding', return_value=[0.05] * 2048)
+        self.nim_patcher.start()
+        self.addCleanup(self.nim_patcher.stop)
         self.library = Location.objects.create(
             name="Test Campus Library",
             location_type=LocationType.LIBRARY,
@@ -777,4 +780,60 @@ class BackendFoundationTests(APITestCase):
         output = out.getvalue()
         self.assertIn("CAMPUS PILOT SIMULATION COMPLETED SUCCESSFULLY", output)
         self.assertIn("10/10 STEPS PASSED", output)
+
+    def test_pilot_metrics_service_command_and_endpoint(self):
+        import json
+        from audit.services import PilotMetricsService
+
+        # 1. Test PilotMetricsService direct computation
+        metrics = PilotMetricsService.compute_metrics()
+        self.assertIn('recovery_metrics', metrics)
+        self.assertIn('claims_and_verification', metrics)
+        self.assertIn('custody_and_transfers', metrics)
+        self.assertIn('safety_and_moderation', metrics)
+        self.assertIn('audit_and_idempotency', metrics)
+
+        # 2. Test CLI command standard output
+        out = io.StringIO()
+        call_command('export_pilot_metrics', stdout=out)
+        cli_output = out.getvalue()
+        self.assertIn("CAMPUS PILOT METRICS & KPI SCORECARD", cli_output)
+        self.assertIn("Recovery Success Rate", cli_output)
+        self.assertIn("Verification Precision", cli_output)
+        self.assertIn("Custody Trail Completeness", cli_output)
+
+        # 3. Test CLI command JSON output
+        out_json = io.StringIO()
+        call_command('export_pilot_metrics', json=True, stdout=out_json)
+        json_data = json.loads(out_json.getvalue())
+        self.assertIn("recovery_metrics", json_data)
+        self.assertIn("custody_and_transfers", json_data)
+
+        # 4. Test API endpoint permissions (Student user forbidden)
+        self.client.force_authenticate(user=self.student)
+        res_forbidden = self.client.get(reverse('admin-metrics-export'))
+        self.assertEqual(res_forbidden.status_code, 403)
+
+        # 5. Test API endpoint JSON export (Admin authorized)
+        self.client.force_authenticate(user=self.admin_user)
+        res_json = self.client.get(reverse('admin-metrics-export'), {'format': 'json'})
+        self.assertEqual(res_json.status_code, 200)
+        self.assertIn('recovery_metrics', res_json.data)
+        self.assertIn('period', res_json.data)
+
+        # 6. Test API endpoint CSV export
+        res_csv = self.client.get(reverse('admin-metrics-export'), {'format': 'csv'})
+        self.assertEqual(res_csv.status_code, 200)
+        self.assertEqual(res_csv['Content-Type'], 'text/csv; charset=utf-8')
+        self.assertIn('attachment; filename="utn_pilot_metrics.csv"', res_csv['Content-Disposition'])
+        csv_text = res_csv.content.decode('utf-8')
+        self.assertIn("UTN Campus Pilot Success Metrics", csv_text)
+        self.assertIn("Recovery Success Rate", csv_text)
+
+        # 7. Test Admin Overview endpoint includes pilot_metrics with days parameter
+        res_overview = self.client.get(reverse('admin-overview'), {'days': 30})
+        self.assertEqual(res_overview.status_code, 200)
+        self.assertIn('pilot_metrics', res_overview.data)
+        self.assertEqual(res_overview.data['pilot_metrics']['period']['filter_days'], 30)
+
 

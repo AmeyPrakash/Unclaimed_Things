@@ -8,6 +8,57 @@ export interface User {
   created_at: string;
 }
 
+export interface PilotMetrics {
+  period: {
+    generated_at: string;
+    filter_days: number | null;
+    location_filter: string | null;
+  };
+  recovery_metrics: {
+    total_found_items: number;
+    returned_to_owner: number;
+    currently_in_custody: number;
+    recovery_rate_pct: number;
+    target_gate_met: boolean;
+  };
+  lost_reports: {
+    total_lost_filed: number;
+    open_lost_active: number;
+    withdrawn_by_user: number;
+  };
+  claims_and_verification: {
+    total_claims: number;
+    approved: number;
+    completed: number;
+    needs_info: number;
+    rejected: number;
+    pending_review: number;
+    verification_precision_pct: number;
+    false_positive_claim_rate_pct: number;
+    target_gate_met: boolean;
+  };
+  custody_and_transfers: {
+    total_custody_events: number;
+    handover_events_recorded: number;
+    custody_trail_integrity_pct: number;
+    transfers_requested: number;
+    transfers_accepted: number;
+    transfer_completion_pct: number;
+    mean_handover_turnaround_hours: number | null;
+    median_handover_turnaround_hours: number | null;
+  };
+  safety_and_moderation: {
+    community_abuse_flags: number;
+    hidden_listings: number;
+    removed_listings: number;
+    suspended_users: number;
+  };
+  audit_and_idempotency: {
+    total_audit_events: number;
+    idempotent_handovers_verified: number;
+  };
+}
+
 export interface AdminOverview {
   reports: {
     total: number;
@@ -47,6 +98,7 @@ export interface AdminOverview {
     embeddings_count: number;
     audit_events_count: number;
   };
+  pilot_metrics?: PilotMetrics;
 }
 
 export interface AuditEventItem {
@@ -363,7 +415,10 @@ export const api = {
   },
 
   admin: {
-    overview: () => request<AdminOverview>('/admin/overview/'),
+    overview: (days?: number) => {
+      const qs = days ? `?days=${days}` : '';
+      return request<AdminOverview>(`/admin/overview/${qs}`);
+    },
     auditEvents: (params?: { action?: string; search?: string }) => {
       const qs = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
       return request<PaginatedResponse<AuditEventItem> | AuditEventItem[]>(`/admin/audit-events/${qs ? `?${qs}` : ''}`);
@@ -386,6 +441,21 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ is_active, reason }),
       }),
+    exportPilotMetricsCsv: async (days?: number): Promise<Blob> => {
+      const qs = new URLSearchParams({ format: 'csv' });
+      if (days) qs.set('days', days.toString());
+      const response = await fetch(`${API_BASE}/admin/metrics/export/?${qs.toString()}`, {
+        headers: { Accept: 'text/csv' },
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to export metrics CSV');
+      return response.blob();
+    },
+    exportPilotMetricsJson: (days?: number) => {
+      const qs = new URLSearchParams({ format: 'json' });
+      if (days) qs.set('days', days.toString());
+      return request<PilotMetrics>(`/admin/metrics/export/?${qs.toString()}`);
+    },
   },
 
   health: {

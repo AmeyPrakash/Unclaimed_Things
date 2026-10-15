@@ -6,10 +6,12 @@ from .views import (
     AdminModerateReportView,
     AdminUsersListView,
     AdminSuspendUserView,
+    AdminMetricsExportView,
 )
 
 urlpatterns = [
     path('admin/overview/', AdminOverviewView.as_view(), name='admin-overview'),
+    path('admin/metrics/export/', AdminMetricsExportView.as_view(), name='admin-metrics-export'),
     path('admin/audit-events/', AdminAuditEventsView.as_view(), name='admin-audit-events'),
     path('admin/reports/', AdminReportsListView.as_view(), name='admin-reports'),
     path('admin/reports/<uuid:pk>/moderate/', AdminModerateReportView.as_view(), name='admin-report-moderate'),

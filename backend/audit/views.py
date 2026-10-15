@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db.models import Q
 from .models import AuditEvent
 from .serializers import AuditEventSerializer, AdminReportSerializer, AdminUserSerializer
+from .services import PilotMetricsService
 from reports.models import ItemReport, ReportType, ReportStatus, ReportVisibility, ItemEmbedding, ReportAbuseFlag
 from claims.models import Claim, ClaimStatus
 from custody.models import CustodyEvent, CustodyEventType
@@ -27,6 +28,9 @@ class AdminOverviewView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
+        days_param = request.query_params.get('days')
+        days = int(days_param) if days_param and days_param.isdigit() else None
+
         # Report metrics
         total_reports = ItemReport.objects.count()
         lost_open = ItemReport.objects.filter(report_type=ReportType.LOST, status=ReportStatus.OPEN).count()
@@ -103,8 +107,37 @@ class AdminOverviewView(APIView):
                 "nim_model": getattr(settings, 'NIM_EMBEDDING_MODEL', 'unknown'),
                 "embeddings_count": embeddings_count,
                 "audit_events_count": audit_events_count
-            }
+            },
+            "pilot_metrics": PilotMetricsService.compute_metrics(days=days)
         })
+
+class AdminMetricsExportView(APIView):
+    """
+    GET /api/v1/admin/metrics/export/?format=csv|json[&days=30]
+    Allows campus administrators to export pilot KPI and success metrics per PRD Section 9.
+    """
+    permission_classes = [IsAdminUser]
+
+    def perform_content_negotiation(self, request, force=False):
+        # Prevent DRF DefaultContentNegotiation from raising NotFound when query param is ?format=csv
+        renderers = self.get_renderers()
+        return (renderers[0], renderers[0].media_type)
+
+    def get(self, request):
+        fmt = request.query_params.get('format', 'json').lower()
+        days_param = request.query_params.get('days')
+        days = int(days_param) if days_param and days_param.isdigit() else None
+
+        metrics = PilotMetricsService.compute_metrics(days=days)
+
+        if fmt == 'csv':
+            from django.http import HttpResponse
+            csv_data = PilotMetricsService.generate_csv(metrics)
+            response = HttpResponse(csv_data, content_type='text/csv; charset=utf-8')
+            response['Content-Disposition'] = 'attachment; filename="utn_pilot_metrics.csv"'
+            return response
+
+        return Response(metrics)
 
 class AdminAuditEventsView(generics.ListAPIView):
     """
